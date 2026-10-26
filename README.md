@@ -13,6 +13,16 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 - 🛠️ **原生工具** - `yunxiao_workitems`（查项目 / 工作项 / 状态）、`yunxiao_transition`（流转状态）
 - 🔐 **令牌只在 Host** - 令牌不出 Host 进程，前端不回显、不进日志
 
+## 📸 截图
+
+**看板**：需求 / 缺陷分栏按状态展示，卡片可拖拽流转，支持编号检索与优先级、负责人筛选。
+
+![云效进度看板](docs/images/board.png)
+
+**详情**：状态、负责人、类型、时间等字段，描述按原富文本排版展示（图片、附件同源）。
+
+![工作项详情](docs/images/detail.png)
+
 ## 📦 安装
 
 本仓库是本地 DSH 插件（`package.json` 已声明 `dsh.bundle` 与 `dsh.client`）：
