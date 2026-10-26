@@ -1,8 +1,17 @@
 {
   "name": "dsh-yunxiao-taskboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DeepSeek Harness plugin: Aliyun Yunxiao requirements and defects kanban by status, with detail drawer, image preview, one-click session dispatch and native status-transition tools.",
-  "keywords": ["deepseek-harness", "dsh", "dsh-plugin", "cordis", "yunxiao", "aliyun", "kanban", "workitem"],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "yunxiao",
+    "aliyun",
+    "kanban",
+    "workitem"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,7 +31,16 @@
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "client.js", "server", "cordis.patch.yml", "locale", "icon.svg", "README.md", "LICENSE"],
+  "files": [
+    "index.js",
+    "client.js",
+    "server",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
     "prepublishOnly": "npm test"
@@ -35,7 +53,13 @@
     "dsh": ">=0.2.1-rc.3 <0.3.0"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "immediately": true, "inject": [] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
   }
 }

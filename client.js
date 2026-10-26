@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
       已完成: '#2f8a5f', 已修复: '#2f8a5f',
       已取消: '#8a8a8a', 已关闭: '#8a8a8a', 暂不修复: '#8a8a8a',
     }
-    const PRIORITY_COLORS = { 紧急: '#d24b3f', 高: '#e08a2b', 中: '#2f6bb8', 低: '#b3a893' }
+    const PRIORITY_COLORS = { 紧急: '#bd5f4e', 高: '#c98d4a', 中: '#5e7fa6', 低: '#b0a894' }
     const PRIORITIES = [{ id: 'urgent', label: '紧急' }, { id: 'high', label: '高' }, { id: 'medium', label: '中' }, { id: 'low', label: '低' }]
     // 只有还没进入流程的状态才给「处理」入口
     const OPEN_STATUSES = new Set(['待处理', '待确认', '再次打开'])
@@ -36,11 +36,16 @@ window.__ModuleLoader__.load({
       return payload.value
     }
 
-    function formatTime(value) {
+    function formatTime(value, dateOnly) {
       if (value == null || value === '') return ''
       const date = new Date(value)
       if (Number.isNaN(date.getTime())) return ''
       const pad = (n) => String(n).padStart(2, '0')
+      // 非本年日期带上年份，否则看不出是哪年；卡片上跨年日期只留日期，详情里仍给完整时间
+      if (date.getFullYear() !== new Date().getFullYear()) {
+        const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+        return dateOnly ? day : `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+      }
       return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
     }
 
@@ -56,19 +61,28 @@ window.__ModuleLoader__.load({
 
     function Card({ card, statuses, error, workspaces, canProcess, pickerOpen, dragging, onLoadStatuses, onToggleWorkspaces, onProcess, onMove, onOpen, onDragStart, onDragEnd }) {
       const [hover, setHover] = useState(false)
+      // 操作按钮平时隐藏、Hover 显现；展开下拉时强制可见，避免无处可点
+      const showActions = hover || statuses || pickerOpen
+      const actionStyle = {
+        cursor: 'pointer', border: 0, background: 'transparent', padding: '1px 2px',
+        fontSize: 11.5, color: hover ? '#5c5346' : '#8a8172', borderRadius: 4,
+        opacity: showActions ? 1 : 0, transition: 'opacity .12s ease, color .12s ease',
+      }
       return h('article', {
         draggable: true,
         style: {
           background: '#fff',
-          border: '1px solid #e6e2d9',
+          // 不能用 border 简写 + borderLeft：hover 重设简写会把左边框复位掉（React 只重设变化的值）
+          borderTop: `1px solid ${hover ? '#d8cfbd' : '#e9e4da'}`,
+          borderRight: `1px solid ${hover ? '#d8cfbd' : '#e9e4da'}`,
+          borderBottom: `1px solid ${hover ? '#d8cfbd' : '#e9e4da'}`,
           borderLeft: `3px solid ${card.statusColor || '#c8c2b6'}`,
           borderRadius: 8,
-          padding: '10px 12px',
-          marginBottom: 10,
+          padding: '8px 8px',
+          marginBottom: 8,
           cursor: 'grab',
           opacity: dragging ? 0.45 : 1,
-          boxShadow: hover ? '0 2px 8px rgba(60,50,30,.10)' : '0 1px 2px rgba(60,50,30,.04)',
-          transition: 'box-shadow .15s ease, opacity .15s ease',
+          transition: 'border-color .12s ease, opacity .12s ease',
         },
         onMouseEnter: () => setHover(true),
         onMouseLeave: () => setHover(false),
@@ -80,40 +94,43 @@ window.__ModuleLoader__.load({
         },
         onDragEnd: onDragEnd,
       },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 } },
-          h('span', { style: { font: '600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace', color: '#8a7f6b', letterSpacing: '.02em' } }, card.serialNumber),
-          h('span', { style: { font: '11px/1.4 system-ui, sans-serif', color: '#a89c88', whiteSpace: 'nowrap' } }, formatTime(card.updatedAt))),
-        h('div', { style: { fontSize: 13.5, lineHeight: 1.5, color: '#22201c', wordBreak: 'break-word' } }, card.subject || '(无标题)'),
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 8 } },
-          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#776c5b' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, marginBottom: 4 } },
+          h('span', { style: { font: '500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace', color: '#948b7c', whiteSpace: 'nowrap', flex: 'none' } }, card.serialNumber), // taste-skill-ignore: 工作项编号用等宽字体，扫视对齐（app-screens ID 规范）
+          h('span', { style: { position: 'relative', flex: '1 1 auto', minWidth: 0, textAlign: 'right' } },
+            h('span', { style: { display: 'block', fontSize: 11, lineHeight: 1.4, color: '#a89c88', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontVariantNumeric: 'tabular-nums', opacity: showActions ? 0 : 1, transition: 'opacity .12s ease' } }, formatTime(card.updatedAt, true)),
             h('span', {
-              style: { width: 18, height: 18, borderRadius: '50%', background: '#efeae0', display: 'inline-grid', placeItems: 'center', fontSize: 10, color: '#8a7f6b' },
+              style: {
+                position: 'absolute', right: 0, top: 0, display: 'inline-flex', gap: 2,
+                opacity: showActions ? 1 : 0, transition: 'opacity .12s ease',
+                pointerEvents: showActions ? 'auto' : 'none',
+              },
+            },
+              h('button', {
+                type: 'button',
+                onClick: (event) => { event.stopPropagation(); onLoadStatuses(card) },
+                style: actionStyle,
+              }, statuses ? '收起' : '流转'),
+              canProcess ? h('button', {
+                type: 'button',
+                onClick: (event) => { event.stopPropagation(); onToggleWorkspaces(card) },
+                style: actionStyle,
+              }, pickerOpen ? '取消' : '处理') : null))),
+        h('div', {
+          style: {
+            fontSize: 13, lineHeight: 1.45, fontWeight: 600, color: '#1f1c18', wordBreak: 'break-word',
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          },
+        }, card.subject || '(无标题)'),
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 } },
+          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#8a8172', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } },
+            h('span', {
+              style: { width: 16, height: 16, flex: 'none', borderRadius: '50%', background: '#f0ece3', display: 'inline-grid', placeItems: 'center', fontSize: 9.5, color: '#948b7c' },
             }, (card.assignee || '?').slice(0, 1)),
             card.assignee || '未分配'),
-          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
-            card.priority ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#776c5b' } },
-              h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: PRIORITY_COLORS[card.priority] || '#b3a893' } }),
-              card.priority) : null,
-            card.statusText ? h('span', {
-              style: { fontSize: 11, color: '#8a7f6b', background: '#f4f1ea', borderRadius: 999, padding: '2px 8px' },
-            }, card.statusText) : null)),
-        h('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
-          h('button', {
-            type: 'button',
-            onClick: (event) => { event.stopPropagation(); onLoadStatuses(card) },
-            style: {
-              flex: 1, cursor: 'pointer', border: '1px solid #e6e2d9', background: hover ? '#faf8f3' : '#fff',
-              color: '#5c5346', borderRadius: 6, padding: '5px 0', fontSize: 12,
-            },
-          }, statuses ? '收起' : '流转'),
-          canProcess ? h('button', {
-            type: 'button',
-            onClick: (event) => { event.stopPropagation(); onToggleWorkspaces(card) },
-            style: {
-              flex: 1, cursor: 'pointer', border: '1px solid #d8cfbd', background: '#faf7f0',
-              color: '#6b5a38', borderRadius: 6, padding: '5px 0', fontSize: 12,
-            },
-          }, pickerOpen ? '取消' : '处理') : null),
+          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, flex: 'none' } },
+            card.priority ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8a8172' } },
+              h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: PRIORITY_COLORS[card.priority] || '#b0a894' } }),
+              card.priority) : null)),
         pickerOpen ? h('select', {
           value: '',
           autoFocus: true,
@@ -260,7 +277,7 @@ window.__ModuleLoader__.load({
         h('aside', {
           onClick: (event) => event.stopPropagation(),
           style: {
-            width: 460, maxWidth: '92vw', height: '100%', background: '#fff', borderLeft: '1px solid #eae5da',
+            width: 920, maxWidth: '92vw', height: '100%', background: '#fff', borderLeft: '1px solid #eae5da',
             boxShadow: '-8px 0 28px rgba(50,40,25,.14)', display: 'flex', flexDirection: 'column',
             font: '14px/1.55 system-ui, -apple-system, "PingFang SC", sans-serif', color: '#22201c',
           },
@@ -268,7 +285,7 @@ window.__ModuleLoader__.load({
           h('header', {
             style: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid #f0ece3' },
           },
-            h('span', { style: { font: '600 12px/1.4 ui-monospace, Menlo, monospace', color: '#8a7f6b' } }, serial),
+            h('span', { style: { font: '600 12px/1.4 ui-monospace, Menlo, monospace', color: '#8a7f6b' } }, serial), // taste-skill-ignore: 工作项编号用等宽字体，扫视对齐（app-screens ID 规范）
             h('span', { style: { flex: 1 } }),
             h('button', {
               type: 'button', onClick: onClose, title: '关闭',
@@ -314,7 +331,7 @@ window.__ModuleLoader__.load({
                     color: file.url ? '#3f382e' : '#a1937c', cursor: file.url ? 'pointer' : 'default',
                   },
                 },
-                  h('span', { style: { fontSize: 15 } }, '📎'),
+                  h('span', { style: { fontSize: 15 } }, '📎'), // taste-skill-ignore: 附件行的文件图标，无图标库可用
                   h('span', { style: { flex: 1, fontSize: 13, wordBreak: 'break-all' } }, file.name),
                   h('span', { style: { fontSize: 11.5, color: '#a1937c' } }, formatSize(file.size))))) : null)
             : (!error ? h('div', { style: { color: '#a89c88', fontSize: 13 } }, '加载中…') : null))),
@@ -655,12 +672,12 @@ window.__ModuleLoader__.load({
       return h('div', {
         style: {
           height: '100%', boxSizing: 'border-box', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-          background: '#f7f5f0', color: '#22201c', padding: '18px 22px 20px',
+          background: '#f7f5f0', color: '#22201c', padding: '16px 20px',
           font: '14px/1.5 system-ui, -apple-system, "PingFang SC", sans-serif',
         },
       },
         h('style', null, '@keyframes yx-spin{to{transform:rotate(360deg)}}'),
-        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flex: 'none' } },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12, flex: 'none' } },
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 650, letterSpacing: '-.01em' } }, '云效进度'),
           loading ? h('span', { style: { fontSize: 12, color: '#a89c88' } }, '加载中…') : null,
           h('span', { style: { flex: 1 } }),
@@ -668,8 +685,8 @@ window.__ModuleLoader__.load({
 
         h('div', {
           style: {
-            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, flex: 'none',
-            background: '#fff', border: '1px solid #eae5da', borderRadius: 10, padding: 10,
+            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12, flex: 'none',
+            background: '#fff', border: '1px solid #eae5da', borderRadius: 10, padding: '8px 10px',
           },
         },
           orgs.organizations.length > 0 && orgs.edition !== 'region' ? h('select', {
@@ -739,9 +756,9 @@ window.__ModuleLoader__.load({
 
         groups.map((group) => h('div', { key: group.category, style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginBottom: 0 } },
           groups.length > 1 ? h('div', {
-            style: { fontSize: 12, fontWeight: 600, color: '#8a7f6b', letterSpacing: '.06em', marginBottom: 10, textTransform: 'uppercase' },
+            style: { fontSize: 12, fontWeight: 600, color: '#8a7f6b', marginBottom: 8 },
           }, group.category === 'Bug' ? '缺陷' : '需求') : null,
-          h('div', { style: { display: 'flex', gap: 14, overflowX: 'auto', overflowY: 'hidden', alignItems: 'stretch', flex: 1, minHeight: 0, paddingBottom: 16, scrollbarGutter: 'stable' } },
+          h('div', { style: { display: 'flex', gap: 12, overflowX: 'auto', overflowY: 'hidden', alignItems: 'stretch', flex: 1, minHeight: 0, paddingBottom: 16, scrollbarGutter: 'stable' } },
             group.columns.map((col) => {
               const visible = col.cards.filter((card) => !assignee || card.assignee === assignee)
               const color = STATUS_COLORS[col.label] || '#8a7f6b'
@@ -766,21 +783,21 @@ window.__ModuleLoader__.load({
                   dropOn(col.id, cardId)
                 },
                 style: {
-                  flex: '1 1 272px', minWidth: 264, maxWidth: 420, background: '#fff',
+                  // 等宽分配：6 列在一屏内放下，空列不塌缩也不撑爆
+                  flex: '1 1 0', minWidth: 0, maxWidth: 'none', background: '#fff',
                   border: `1px solid ${dropping ? color : '#eae5da'}`,
                   borderStyle: dropping ? 'dashed' : 'solid',
-                  borderRadius: 12, padding: 12,
-                  boxShadow: dropping ? `inset 0 0 0 2px ${color}22` : '0 1px 2px rgba(60,50,30,.04)',
+                  borderRadius: 10, padding: '10px 10px 12px',
                   display: 'flex', flexDirection: 'column', minHeight: 0,
                   transition: 'border-color .12s ease, box-shadow .12s ease',
                 },
               },
-                h('header', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flex: 'none' } },
+                h('header', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flex: 'none' } },
                   h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: color } }),
                   h('span', { style: { fontSize: 13, fontWeight: 600, color: '#3f382e' } }, col.label),
                   h('span', {
                     style: {
-                      fontSize: 11, color, background: `${color}14`, borderRadius: 999,
+                      fontSize: 11, color: '#8a8172', background: '#f4f1ea', borderRadius: 999,
                       padding: '1px 8px', fontVariantNumeric: 'tabular-nums',
                     },
                   }, col.total)),
@@ -788,7 +805,7 @@ window.__ModuleLoader__.load({
                   visible.length
                   ? visible.map((card) => h(Card, {
                     key: card.id,
-                    card: { ...card, statusColor: color, statusText: card.status },
+                    card: { ...card, statusColor: color },
                     statuses: open[card.id],
                     error: cardError[card.id],
                     workspaces,
