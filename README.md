@@ -25,11 +25,21 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 
 ## 📦 安装
 
-本仓库是本地 DSH 插件（`package.json` 已声明 `dsh.bundle` 与 `dsh.client`）：
+以 npm 组合包分发：[`dsh-yunxiao-taskboard`](https://www.npmjs.com/package/dsh-yunxiao-taskboard)，按组合包安装，无需本地目录。要求 DSH `>= 0.2.1-rc.3`（声明在 `engines.dsh`）。
 
-1. 把本目录加入 DSH 当前 profile 的插件配置（`cordis.patch.yml` 插入 `yunxiao-taskboard`，与仓库内 `cordis.patch.yml` 一致）
-2. 重启或刷新 DSH Web
-3. 在插件设置里填令牌
+**Web**：侧边栏「插件」→「安装组合包」→ 填 `dsh-yunxiao-taskboard` → 安装。
+
+**交给 Agent**：`plugin_manager` → `install_bundle`，`target` 填 `dsh-yunxiao-taskboard`。
+
+**CLI**：
+
+```bash
+dsh plugin --profile <profile> add dsh-yunxiao-taskboard
+```
+
+CLI 只装依赖，还要在「插件」页启用 `dsh-yunxiao-taskboard` 组合包（等价于在 profile 的 `dsh.profile.bundles` 里追加）。
+
+安装后刷新 DSH Web，在插件设置里填令牌（配置见下）。
 
 ## ⚙️ 配置
 
@@ -48,6 +58,13 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 
 ```bash
 node --test        # 23 个用例，覆盖连接解析、检索条件、组织列表、流转校验
+```
+
+发布（`files` 白名单已限定包内容，`prepublishOnly` 先跑测试）：
+
+```bash
+npm pack --dry-run   # 核对 tarball 内容
+npm publish          # publishConfig.access = public
 ```
 
 代码结构：
