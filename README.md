@@ -13,6 +13,7 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 - 📝 **改动留档** - `yunxiao_comment` 把每次改动写成需求评论，推送后把 Codeup 提交关联到需求
 - 🛠️ **原生工具** - `yunxiao_workitems`（查项目 / 工作项 / 状态）、`yunxiao_transition`（流转状态）、`yunxiao_comment`（评论留档 / 关联提交）
 - 🔐 **令牌只在 Host** - 令牌不出 Host 进程，前端不回显、不进日志
+- 🔄 **版本更新提醒** - 右上角显示当前版本；npm 有新版本时显示最新版号并可一键升级（重启 DSH 生效）
 
 ## 📸 截图
 
@@ -75,7 +76,7 @@ yunxiao_comment({
 ## 🧪 开发
 
 ```bash
-node --test        # 30 个用例，覆盖连接解析、检索条件、组织列表、流转校验、评论留档与提交关联
+node --test        # 37 个用例，覆盖连接解析、检索条件、组织列表、流转校验、评论留档、提交关联与版本比较
 ```
 
 发布（`files` 白名单已限定包内容，`prepublishOnly` 先跑测试）：

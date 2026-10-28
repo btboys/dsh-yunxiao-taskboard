@@ -25,10 +25,10 @@ window.__ModuleLoader__.load({
       }, h('rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }), h('path', { d: 'M8 7v10M12 7v6M16 7v8' }))
     }
 
-    async function rpc(method, args) {
+    async function rpc(method, args, extraHeaders) {
       const response = await fetch('/api/yunxiao-taskboard', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...extraHeaders },
         body: JSON.stringify({ method, args }),
       })
       const payload = await response.json()
@@ -57,6 +57,51 @@ window.__ModuleLoader__.load({
       if (!columns) return ''
       if (columns.reduce((n, col) => n + col.cards.length, 0)) return ''
       return q ? '没有匹配的工作项' : '这里还没有工作项'
+    }
+
+    // 版本文案优先级：升级完成 > 已升级待重启 > 有新版 > 当前版本
+    function versionLabel(info, state) {
+      if (state?.status === 'done') return `已升级到 v${state.version}，重启 DSH 生效`
+      if (info.pendingRestart) return `v${info.current} · 重启 DSH 生效`
+      if (info.updateAvailable) return `v${info.current} → v${info.latest}`
+      return `v${info.current}`
+    }
+
+    function versionTitle(info, state) {
+      if (state?.status === 'failed') return `升级失败：${state.error}`
+      if (state?.status === 'done') return '重启 DSH 后新版本生效'
+      if (info.updateAvailable && !info.canUpdate) {
+        return info.linked
+          ? '本地开发安装，请用 pnpm 更新依赖'
+          : '当前环境不支持一键升级，请在插件页或 DSH Desktop 升级'
+      }
+      return '插件版本'
+    }
+
+    // 右上角版本标记：平时显示当前版本，有新版时显示最新版号 + 一键升级
+    function VersionBadge({ info, state, onUpgrade }) {
+      if (!info) return null
+      const upgrading = state?.status === 'running'
+      const done = state?.status === 'done'
+      const failed = state?.status === 'failed'
+      return h('span', {
+        title: versionTitle(info, state),
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: 6, flex: 'none',
+          fontSize: 11.5, color: failed ? '#a3342b' : '#a89c88', whiteSpace: 'nowrap',
+        },
+      },
+        h('span', null, versionLabel(info, state)),
+        failed ? h('span', null, '升级失败') : null,
+        info.updateAvailable && info.canUpdate && !done ? h('button', {
+          type: 'button', onClick: onUpgrade, disabled: upgrading,
+          title: `升级到 v${info.latest}`,
+          style: {
+            border: 0, borderRadius: 999, padding: '2px 10px', fontSize: 11.5,
+            background: '#3f382e', color: '#fff', cursor: upgrading ? 'default' : 'pointer',
+            opacity: upgrading ? 0.65 : 1,
+          },
+        }, upgrading ? '升级中…' : '升级') : null)
     }
 
     function Card({ card, statuses, error, workspaces, canProcess, pickerOpen, dragging, onLoadStatuses, onToggleWorkspaces, onProcess, onMove, onOpen, onDragStart, onDragEnd }) {
@@ -454,9 +499,31 @@ window.__ModuleLoader__.load({
       const [dropTarget, setDropTarget] = useState(null)
       const [settings, setSettings] = useState(null)
       const [orgs, setOrgs] = useState({ organizations: [], organizationId: '', edition: '', error: null })
+      const [versionInfo, setVersionInfo] = useState(null)
+      const [upgradeState, setUpgradeState] = useState(null)
       const orgId = orgs.organizationId || ''
       const cardsById = new Map((columns || []).flatMap((col) => col.cards.map((card) => [card.id, card])))
       const workspaces = ctx.workspaces.list.getSnapshot().items
+
+      useEffect(() => {
+        let stop = false
+        rpc('version').then((data) => { if (!stop) setVersionInfo(data) }).catch(() => {})
+        return () => { stop = true }
+      }, [])
+
+      async function upgradePlugin() {
+        setUpgradeState({ status: 'running' })
+        try {
+          // 自定义头让跨域页面无法直接触发安装（带自定义头的跨域请求要先过预检）
+          const result = await rpc('update', undefined, { 'x-dsh-taskboard-action': 'update' })
+          setVersionInfo((info) => info
+            ? { ...info, current: result.version, latest: result.version, updateAvailable: false, pendingRestart: true }
+            : info)
+          setUpgradeState({ status: 'done', version: result.version })
+        } catch (err) {
+          setUpgradeState({ status: 'failed', error: err.message })
+        }
+      }
 
       useEffect(() => {
         const timer = setTimeout(() => setQ(draft.trim()), 300)
@@ -683,7 +750,8 @@ window.__ModuleLoader__.load({
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 650, letterSpacing: '-.01em' } }, '云效进度'),
           loading ? h('span', { style: { fontSize: 12, color: '#a89c88' } }, '加载中…') : null,
           h('span', { style: { flex: 1 } }),
-          error ? h('span', { style: { fontSize: 12, color: '#a3342b' } }, error.message) : null),
+          error ? h('span', { style: { fontSize: 12, color: '#a3342b' } }, error.message) : null,
+          h(VersionBadge, { info: versionInfo, state: upgradeState, onUpgrade: upgradePlugin })),
 
         h('div', {
           style: {

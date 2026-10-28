@@ -1,6 +1,6 @@
 {
   "name": "dsh-yunxiao-taskboard",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "DeepSeek Harness plugin: Aliyun Yunxiao requirements and defects kanban by status, with detail drawer, image preview, one-click session dispatch and native tools for status transitions, change-log comments and Codeup commit linking.",
   "keywords": [
     "deepseek-harness",

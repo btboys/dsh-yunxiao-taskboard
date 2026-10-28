@@ -2,7 +2,10 @@ import { createRequire } from 'node:module'
 import { realpathSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { createClient, listOrganizations } from './server/yunxiao.js'
+import { PACKAGE, compareVersions, fetchLatest, isLocalSpec, readDependencySpec, readVersion, resolveProfile } from './server/version.js'
 
 // ponytail: linked workspace cannot resolve dsh's own packages; resolve from the dsh entry instead
 function hostRequire() {
@@ -48,8 +51,56 @@ function send(res, payload) {
 }
 
 // 插件行没有通用配置表单，这里自带可编辑设置：保存值 > 插件配置 > 环境变量
-const STORE = join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'yunxiao-taskboard.json')
+const HOME = process.env.DSH_HOME || join(homedir(), '.dsh')
+const STORE = join(HOME, 'yunxiao-taskboard.json')
 const FIELDS = ['token', 'organizationId', 'baseUrl', 'edition']
+
+const PACKAGE_FILE = fileURLToPath(new URL('./package.json', import.meta.url))
+// 进程加载时的代码版本：磁盘版本更高说明已升级但还没重启，前端据此提示「重启生效」
+const loadedVersion = readVersion(PACKAGE_FILE)
+// CLI 升级需要 profile；识别不到就不提供升级入口，免得改错 profile
+const profile = resolveProfile()
+const isDesktop = Boolean(process.versions.electron) || process.env.ELECTRON_RUN_AS_NODE !== undefined
+
+// 用当前 dsh 入口拉起 CLI（子系统 PATH 里未必有 dsh），找不到再退回裸命令
+function dshEntry() {
+  try {
+    const entry = realpathSync(process.argv[1])
+    return /[\\/]bin\.js$/.test(entry) ? entry : ''
+  } catch {
+    return ''
+  }
+}
+
+function runPluginCommand(args, timeoutMs = 180_000) {
+  return new Promise((resolve) => {
+    const entry = dshEntry()
+    const command = entry ? process.execPath : 'dsh'
+    const argv = [...(entry ? [entry] : []), 'plugin', '--profile', profile, ...args]
+    const child = spawn(command, argv, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: !entry && process.platform === 'win32',
+    })
+    let output = ''
+    const collect = (chunk) => { output = (output + String(chunk)).slice(-4000) }
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
+    const timer = setTimeout(() => {
+      child.kill()
+      // 被杀进程不保证再触发 close，这里主动结算，避免升级入口永久卡在「升级中」
+      resolve({ ok: false, output: `${output}\n升级命令执行超时` })
+    }, timeoutMs)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      resolve({ ok: false, output: `${output}\n${error.message}` })
+    })
+    // close 而非 exit：等 stdio 排空，否则失败时最后一段 pnpm 错误可能丢
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      resolve({ ok: code === 0, output })
+    })
+  })
+}
 
 function readStore() {
   try {
@@ -74,7 +125,57 @@ export function apply(ctx, config) {
     orgId ? { ...effective(), organizationId: orgId } : effective(),
     { fetch: globalThis.fetch },
   )
+  let latestCheck = { at: 0, version: '' }
+  async function latestVersion(force = false) {
+    if (!force && latestCheck.version && Date.now() - latestCheck.at < 10 * 60 * 1000) return latestCheck.version
+    const version = await fetchLatest()
+    if (version) latestCheck = { at: Date.now(), version }
+    return version
+  }
+
+  let updating = null
+  function updatePlugin() {
+    if (updating) return updating
+    updating = upgrade().finally(() => { updating = null })
+    return updating
+  }
+
+  async function upgrade() {
+    if (!profile) throw new Error('识别不到当前 DSH profile，请手动升级')
+    if (isDesktop) throw new Error('桌面版请在 DSH Desktop 的插件页升级')
+    if (isLocalSpec(readDependencySpec(join(HOME, 'profiles', profile, 'package.json')))) {
+      throw new Error('当前是本地开发安装，请用 pnpm 更新依赖')
+    }
+    // 点升级时重查一次，避免发完新版本还拿缓存说不更新；网络抖动则退回上次结果
+    const target = (await latestVersion(true)) || latestCheck.version
+    if (!target) throw new Error('读取 npm 最新版本失败，请检查网络')
+    if (compareVersions(target, readVersion(PACKAGE_FILE)) <= 0) throw new Error('已经是最新版本')
+    // pnpm 的 minimumReleaseAge 会推迟新发布版本，显式装精确版本才装得上
+    const result = await runPluginCommand(['add', `${PACKAGE}@${target}`, '-w'])
+    if (!result.ok) {
+      const detail = result.output.split('\n').map((line) => line.trim()).filter(Boolean).slice(-2).join(' ')
+      throw new Error(detail || '升级命令执行失败')
+    }
+    return { version: target }
+  }
+
   const methods = {
+    version: async () => {
+      const current = readVersion(PACKAGE_FILE)
+      const latest = await latestVersion()
+      // link/file 安装是本地开发副本，一键升级会把开发链接换成 npm 版本，先藏起按钮
+      const local = profile ? isLocalSpec(readDependencySpec(join(HOME, 'profiles', profile, 'package.json'))) : false
+      return {
+        current,
+        latest,
+        linked: local,
+        // 磁盘版本 > 进程启动时的版本 = 已升级未重启
+        pendingRestart: Boolean(current) && compareVersions(current, loadedVersion) > 0,
+        updateAvailable: Boolean(latest) && compareVersions(latest, current) > 0,
+        canUpdate: Boolean(profile) && !isDesktop && !local,
+      }
+    },
+    update: () => updatePlugin(),
     settings: () => ({
       token: '',
       hasToken: Boolean(effective().token || process.env.YUNXIAO_API_KEY),
@@ -144,6 +245,10 @@ export function apply(ctx, config) {
       }
       try {
         const body = await readJson(req)
+        // 安装类操作要求自定义头：跨域页面只能发简单请求，带不上自定义头，预检会被浏览器拦掉
+        if (body?.method === 'update' && req.headers['x-dsh-taskboard-action'] !== 'update') {
+          throw new Error('缺少升级请求标记')
+        }
         const method = methods[body?.method]
         if (!method) throw new Error('未知方法')
         send(res, { ok: true, value: await method(body.args) })
