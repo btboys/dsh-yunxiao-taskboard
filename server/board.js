@@ -56,6 +56,32 @@ function priorityOf(item) {
   return field?.values?.[0]?.displayValue ?? ''
 }
 
+// 关联提交接口要的是 codeup 代码库 id，调用方通常只有提交页 URL，这里从 URL 反查
+export function repoPathOf(url) {
+  const text = String(url ?? '').trim().replace(/^git@([^:]+):/, 'https://$1/')
+  if (!text) return ''
+  let path
+  try {
+    path = new URL(text).pathname
+  } catch {
+    return ''
+  }
+  path = path.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '')
+  const cut = path.search(/\/(commit|commits|tree|blob|merge_request|merge_requests)(\/|$)/)
+  return cut >= 0 ? path.slice(0, cut) : path
+}
+
+export function repoIdOf(repositories, url) {
+  const target = repoPathOf(url)
+  if (!target) return ''
+  for (const repo of Array.isArray(repositories) ? repositories : []) {
+    const path = repo?.pathWithNamespace || repoPathOf(repo?.httpUrlToRepo ?? repo?.sshUrlToRepo)
+    if (!path) continue
+    if (target === path || target.startsWith(`${path}/`)) return String(repo.id)
+  }
+  return ''
+}
+
 export function cardOf(item) {
   return {
     id: item.id,

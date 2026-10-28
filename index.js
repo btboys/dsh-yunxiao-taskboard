@@ -131,6 +131,7 @@ export function apply(ctx, config) {
       return client(orgId).transitions(id)
     },
     transition: (input) => client(input?.orgId).transition(input),
+    comment: (input) => client(input?.orgId).comment(input),
   }
 
   ctx.effect(() => ctx.webServer.register({
@@ -170,6 +171,32 @@ export function apply(ctx, config) {
       if (args.action === 'transitions') return { statuses: await methods.transitions({ id: args.id, orgId: args.orgId }) }
       return methods.board({ spaceId: args.spaceId, category: args.category ?? 'Req', q: args.q, priority: args.priority, orgId: args.orgId })
     },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'yunxiao_comment',
+    description: 'Archive a change onto a Yunxiao requirement/bug: post a Markdown comment into its comment list and link the Codeup commits that were pushed. This is the native Yunxiao tool for change history - call it after each meaningful change while developing a work item, and after a git push pass the pushed commits. `content` is the change record (what changed, why, how it was verified). Commit entries are appended to the comment and associated to the work item; the Codeup repository id is resolved from a commit page `url`, so `projectId` is only needed when the url cannot be resolved. Partial commit-association failures do not fail the comment. 403 means the token has no write permission.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Work item id or serial number such as EVXU-1095' },
+      content: { type: 'string', required: true, description: 'Markdown change record: what changed, why, and how it was verified' },
+      commits: {
+        type: 'array',
+        description: 'Codeup commits pushed for this change; each one is linked to the work item',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            sha: { type: 'string', required: true, description: 'Commit SHA' },
+            title: { type: 'string', description: 'Commit subject' },
+            url: { type: 'string', description: 'Codeup commit page URL, used to resolve the repository id' },
+            projectId: { type: 'string', description: 'Codeup repository id; optional when url resolves it' },
+          },
+        },
+      },
+      projectId: { type: 'string', description: 'Default Codeup repository id for all commits' },
+    },
+    output: { schema: { type: 'object', additionalProperties: true }, render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }] },
+    execute: (args) => methods.comment(args),
   }))
 
   ctx.tools.register(defineTool({

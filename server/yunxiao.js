@@ -1,5 +1,5 @@
 import { resolveConnection } from './config.js'
-import { cardOf, descriptionHtml, detailOf, matchStatus, searchBody, statusForPhase } from './board.js'
+import { cardOf, descriptionHtml, detailOf, matchStatus, repoIdOf, searchBody, statusForPhase } from './board.js'
 
 // 组织列表挂在 platform 根下，不在某个组织的 projex 路径里；借用 region 连接只为拿令牌和域名，无需组织 ID
 export async function listOrganizations(config = {}, { fetch, env } = {}) {
@@ -36,6 +36,11 @@ export function createClient(config, { fetch, env } = {}) {
   }
   async function search(body) {
     return request(connection.workitemsSearch, { method: 'POST', body })
+  }
+  // 代码库列表只用于把提交 URL 反查成关联接口要的代码库 id
+  async function codeupRepositories() {
+    const { json } = await request(connection.codeupRepositories)
+    return Array.isArray(json) ? json : []
   }
   async function resolveId(id) {
     if (!String(id).includes('-')) return id
@@ -144,6 +149,53 @@ export function createClient(config, { fetch, env } = {}) {
         }
       } catch {}
       return detail
+    },
+    // 改动留档：评论正文是主体，推送的提交补在正文并关联到需求的代码提交记录
+    comment: async ({ id, content, commits, projectId }) => {
+      const text = String(content ?? '').trim()
+      if (!text) throw new Error('评论内容不能为空')
+      const wid = await resolveId(id)
+      const pushed = (Array.isArray(commits) ? commits : []).filter((commit) => commit && String(commit.sha ?? '').trim())
+      // 正文里已经点到的提交不再重复追加，避免同一提交出现两次
+      const extra = pushed.filter((commit) => !text.includes(String(commit.sha).trim()))
+      const body = extra.length
+        ? `${text}\n\n**关联提交**\n${extra.map((commit) => {
+          const sha = String(commit.sha).trim()
+          return `- ${commit.url ? `[${sha}](${commit.url})` : `\`${sha}\``}${commit.title ? ` ${commit.title}` : ''}`
+        }).join('\n')}`
+        : text
+      const { json } = await request(connection.comments(wid), { method: 'POST', body: { content: body, formatType: 'MARKDOWN' } })
+      const linked = []
+      if (pushed.length) {
+        let repositories = []
+        const needsRepository = pushed.some((commit) => !commit.projectId && !projectId)
+        if (needsRepository) {
+          try {
+            repositories = await codeupRepositories()
+          } catch {}
+        }
+        for (const commit of pushed) {
+          const sha = String(commit.sha).trim()
+          const repoId = String(commit.projectId || projectId || repoIdOf(repositories, commit.url) || '').trim()
+          if (!repoId) {
+            linked.push({ sha, linked: false, error: '缺少代码库 id，无法关联到需求；请在 commits 里补 projectId 或 Codeup 提交页 url' })
+            continue
+          }
+          try {
+            await request(connection.extRelations(wid), { method: 'POST', body: {
+              category: 'codeupCommit',
+              projectId: repoId,
+              commitSha: sha,
+              title: commit.title ?? '',
+              url: commit.url ?? '',
+            } })
+            linked.push({ sha, linked: true })
+          } catch (error) {
+            linked.push({ sha, linked: false, error: error?.message || '关联提交失败' })
+          }
+        }
+      }
+      return { workitemId: wid, commentId: json.id ?? null, commits: linked }
     },
     transitions: async (id) => {
       const wid = await resolveId(id)

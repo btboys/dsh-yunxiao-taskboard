@@ -26,5 +26,11 @@ export function resolveConnection(config = {}, env = process.env) {
     workitemsSearch: `${root}/workitems:search`,
     workitem: (id) => `${root}/workitems/${encodeURIComponent(id)}`,
     workflow: (id) => `${root}/workitems/${encodeURIComponent(id)}/workflow`,
+    comments: (id) => `${root}/workitems/${encodeURIComponent(id)}/comments`,
+    extRelations: (id) => `${root}/workitems/${encodeURIComponent(id)}/extRelationRecords`,
+    // 代码管理是独立产品路径，中心版带组织段，Region 版不带
+    codeupRepositories: edition === 'center'
+      ? `${baseUrl}/oapi/v1/codeup/organizations/${encodeURIComponent(organizationId)}/repositories`
+      : `${baseUrl}/oapi/v1/codeup/repositories`,
   }
 }

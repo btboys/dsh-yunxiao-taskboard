@@ -605,7 +605,9 @@ window.__ModuleLoader__.load({
               '',
               `用本插件的工具读工作项：yunxiao_workitems({ action: "detail", id: "${card.id}" })。`,
               `状态已按开发阶段自动流转：开始开发 → ${phaseLabel.start}，提交并推送后调用 yunxiao_transition({ id: "${card.id}", phase: "pushed" }) 改为 ${phaseLabel.pushed}。`,
-              '不要用 curl 调云效接口，也不要加载 yunxiao-dev 技能，插件工具已经覆盖详情、图片和状态流转。',
+              `每完成一处需求改动，用 yunxiao_comment({ id: "${card.id}", content: "改了什么、为什么、怎么验证" }) 把改动写进需求评论留档。`,
+              `代码推送到 Codeup 后，再调用 yunxiao_comment 并带上 commits：sha、提交标题、Codeup 提交页 url，提交记录会关联到需求；提交信息里也带上 #${card.serialNumber}。`,
+              '不要用 curl 调云效接口，也不要加载 yunxiao-dev 技能，插件工具已经覆盖详情、图片、状态流转、评论留档和提交关联。',
             ].join('\n'),
             whenDraftExists: 'replace',
           })

@@ -293,3 +293,104 @@ test('organization permission errors surface without a token leak', async () => 
     (error) => error.message.includes('permission') && !error.message.includes('secret-token'),
   )
 })
+
+test('comment and codeup endpoints follow the edition paths', () => {
+  const center = resolveConnection({ token: 'cfg', organizationId: 'org' }, env)
+  assert.equal(center.comments('wid'), 'https://env.example/oapi/v1/projex/organizations/org/workitems/wid/comments')
+  assert.equal(center.extRelations('wid'), 'https://env.example/oapi/v1/projex/organizations/org/workitems/wid/extRelationRecords')
+  assert.equal(center.codeupRepositories, 'https://env.example/oapi/v1/codeup/organizations/org/repositories')
+  const region = resolveConnection({ token: 'cfg', edition: 'region', baseUrl: 'https://org.example' }, {})
+  assert.equal(region.comments('wid'), 'https://org.example/oapi/v1/projex/workitems/wid/comments')
+  assert.equal(region.codeupRepositories, 'https://org.example/oapi/v1/codeup/repositories')
+})
+
+import { repoIdOf, repoPathOf } from '../server/board.js'
+
+test('codeup commit url maps back to the repository id', () => {
+  const repositories = [
+    { id: 7502743, pathWithNamespace: 'fxy/fenxi365/financial-v5' },
+    { id: 1, httpUrlToRepo: 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5-saas.git' },
+  ]
+  assert.equal(repoPathOf('https://codeup.aliyun.com/fxy/fenxi365/financial-v5/commit/abc123'), 'fxy/fenxi365/financial-v5')
+  assert.equal(repoPathOf('git@codeup.aliyun.com:fxy/fenxi365/financial-v5.git'), 'fxy/fenxi365/financial-v5')
+  assert.equal(repoPathOf(''), '')
+  assert.equal(repoIdOf(repositories, 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5/commit/abc123'), '7502743')
+  assert.equal(repoIdOf(repositories, 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5-saas/commit/x'), '1')
+  assert.equal(repoIdOf(repositories, 'https://codeup.aliyun.com/other/repo/commit/x'), '')
+  assert.equal(repoIdOf(repositories, ''), '')
+})
+
+test('comment posts markdown and links the pushed commits', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/comments', json: { id: 'comment-1' } },
+    { match: '/extRelationRecords', json: { id: 'relation-1' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.comment({
+    id: 'wid',
+    content: '## 改动\n- 余额表打印边距可调',
+    commits: [{ sha: 'abc1234', title: 'feat(print): 边距', url: 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5/commit/abc1234', projectId: '7502743' }],
+  })
+  assert.equal(result.commentId, 'comment-1')
+  assert.deepEqual(result.commits, [{ sha: 'abc1234', linked: true }])
+  const posted = calls.find((call) => call.url.endsWith('/workitems/wid/comments'))
+  assert.equal(posted.init.headers['x-yunxiao-token'], 't')
+  assert.equal(posted.body.formatType, 'MARKDOWN')
+  assert.match(posted.body.content, /\*\*关联提交\*\*/)
+  assert.match(posted.body.content, /\[abc1234\]\(https:\/\/codeup\.aliyun\.com\/fxy\/fenxi365\/financial-v5\/commit\/abc1234\)/)
+  const relation = calls.find((call) => call.url.endsWith('/extRelationRecords'))
+  assert.deepEqual(relation.body, {
+    category: 'codeupCommit',
+    projectId: '7502743',
+    commitSha: 'abc1234',
+    title: 'feat(print): 边距',
+    url: 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5/commit/abc1234',
+  })
+})
+
+test('comment resolves the repository id from a codeup commit url', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/oapi/v1/codeup/organizations/o/repositories', json: [{ id: 7502743, pathWithNamespace: 'fxy/fenxi365/financial-v5' }] },
+    { match: '/comments', json: { id: 'comment-2' } },
+    { match: '/extRelationRecords', json: { id: 'relation-2' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.comment({
+    id: 'wid',
+    content: '修正边距',
+    commits: [{ sha: 'def5678', url: 'https://codeup.aliyun.com/fxy/fenxi365/financial-v5/commit/def5678' }],
+  })
+  assert.deepEqual(result.commits, [{ sha: 'def5678', linked: true }])
+  const relation = calls.find((call) => call.url.endsWith('/extRelationRecords'))
+  assert.equal(relation.body.projectId, '7502743')
+})
+
+test('comment refuses an empty change record before any write', async () => {
+  const { fetch, calls } = fakeFetch([])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  await assert.rejects(client.comment({ id: 'wid', content: '   ' }), /评论内容/)
+  assert.equal(calls.length, 0)
+})
+
+test('a failed commit link still keeps the comment and reports the reason', async () => {
+  const { fetch } = fakeFetch([
+    { match: '/comments', json: { id: 'comment-3' } },
+    { match: '/extRelationRecords', status: 403, json: { errorMessage: 'NoPermission' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.comment({ id: 'wid', content: '改动', commits: [{ sha: 'def5678', projectId: '9' }] })
+  assert.equal(result.commentId, 'comment-3')
+  assert.equal(result.commits[0].linked, false)
+  assert.match(result.commits[0].error, /NoPermission/)
+})
+
+test('a commit already mentioned in the record is not appended twice', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/comments', json: { id: 'comment-4' } },
+    { match: '/extRelationRecords', json: { id: 'relation-4' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  await client.comment({ id: 'wid', content: '已推送 abc1234 修好边距', commits: [{ sha: 'abc1234', projectId: '9' }] })
+  const posted = calls.find((call) => call.url.endsWith('/comments'))
+  assert.equal(posted.body.content, '已推送 abc1234 修好边距')
+})

@@ -10,7 +10,8 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 - 🔍 **详情抽屉** - 状态、负责人、创建人、类型、项目、时间、描述（富文本排版保留）、附件
 - 🖼️ **图片预览** - 描述内图片经 Host 换取 OSS 直链，点开弹层等比预览，不跳转不下载
 - 🚀 **一键派发** - 「处理」按钮选择工作区，直接起会话并预填 prompt
-- 🛠️ **原生工具** - `yunxiao_workitems`（查项目 / 工作项 / 状态）、`yunxiao_transition`（流转状态）
+- 📝 **改动留档** - `yunxiao_comment` 把每次改动写成需求评论，推送后把 Codeup 提交关联到需求
+- 🛠️ **原生工具** - `yunxiao_workitems`（查项目 / 工作项 / 状态）、`yunxiao_transition`（流转状态）、`yunxiao_comment`（评论留档 / 关联提交）
 - 🔐 **令牌只在 Host** - 令牌不出 Host 进程，前端不回显、不进日志
 
 ## 📸 截图
@@ -54,10 +55,27 @@ CLI 只装依赖，还要在「插件」页启用 `dsh-yunxiao-taskboard` 组合
 
 请求头固定 `x-yunxiao-token`。
 
+## 📝 需求改动留档
+
+开发需求/缺陷时用 `yunxiao_comment` 把改动写进工作项评论列表，推送后把 Codeup 提交关联到工作项：
+
+```js
+yunxiao_comment({
+  id: 'EVXU-1095',
+  content: '## 改动\n- 科目余额表打印支持边距调整\n- 已验证 A4/A5 打印',
+  commits: [{ sha: 'abc1234', title: 'feat(print): 打印边距可调', url: 'https://codeup.aliyun.com/<组>/<库>/commit/abc1234' }],
+})
+```
+
+- `content` 以 Markdown 写到评论列表；提交列表会自动补在正文末尾（正文已提到的提交不重复）。
+- `commits[].url` 是 Codeup 提交页地址，插件用代码库列表反查关联接口要的代码库 id；反查不到时改传 `projectId`。
+- 提交关联失败不回滚评论：返回值里 `commits` 逐个给出 `linked` 和失败原因。
+- 提交信息里带 `#EVXU-1095` 时云效本身也会自动关联，双保险。
+
 ## 🧪 开发
 
 ```bash
-node --test        # 23 个用例，覆盖连接解析、检索条件、组织列表、流转校验
+node --test        # 30 个用例，覆盖连接解析、检索条件、组织列表、流转校验、评论留档与提交关联
 ```
 
 发布（`files` 白名单已限定包内容，`prepublishOnly` 先跑测试）：
