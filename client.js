@@ -501,6 +501,12 @@ window.__ModuleLoader__.load({
       const [orgs, setOrgs] = useState({ organizations: [], organizationId: '', edition: '', error: null })
       const [versionInfo, setVersionInfo] = useState(null)
       const [upgradeState, setUpgradeState] = useState(null)
+      const [createOpen, setCreateOpen] = useState(false)
+      const [createForm, setCreateForm] = useState({ subject: '', description: '', assignedTo: '' })
+      const [members, setMembers] = useState([])
+      const [creating, setCreating] = useState(false)
+      const [createError, setCreateError] = useState('')
+      const [createResult, setCreateResult] = useState('')
       const orgId = orgs.organizationId || ''
       const cardsById = new Map((columns || []).flatMap((col) => col.cards.map((card) => [card.id, card])))
       const workspaces = ctx.workspaces.list.getSnapshot().items
@@ -570,6 +576,35 @@ window.__ModuleLoader__.load({
       function chooseSpace(id) {
         localStorage.setItem(SPACE_KEY, id)
         setSpaceId(id)
+      }
+
+      async function openCreate() {
+        setCreateOpen(true)
+        setCreateError('')
+        setCreateResult('')
+        setCreateForm({ subject: '', description: '', assignedTo: '' })
+        try {
+          setMembers(await rpc('projectMembers', { spaceId, orgId }))
+        } catch (err) {
+          setMembers([])
+          setCreateError(err.message)
+        }
+      }
+
+      async function submitCreate() {
+        setCreating(true)
+        setCreateError('')
+        setCreateResult('')
+        try {
+          const result = await rpc('createWorkitem', { ...createForm, category, spaceId, orgId })
+          setCreateResult(`已创建 ${result.serialNumber || result.id}`)
+          setCreateOpen(false)
+          setTick((value) => value + 1)
+        } catch (err) {
+          setCreateError(err.message)
+        } finally {
+          setCreating(false)
+        }
       }
 
       // 切换组织写回插件配置，会话里的 yunxiao 工具也跟着换组织
@@ -750,6 +785,7 @@ window.__ModuleLoader__.load({
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 650, letterSpacing: '-.01em' } }, '云效进度'),
           loading ? h('span', { style: { fontSize: 12, color: '#a89c88' } }, '加载中…') : null,
           h('span', { style: { flex: 1 } }),
+          createResult ? h('span', { role: 'status', style: { fontSize: 12, color: '#2f8a5f' } }, createResult) : null,
           error ? h('span', { style: { fontSize: 12, color: '#a3342b' } }, error.message) : null,
           h(VersionBadge, { info: versionInfo, state: upgradeState, onUpgrade: upgradePlugin })),
 
@@ -783,6 +819,10 @@ window.__ModuleLoader__.load({
                 boxShadow: category === value ? '0 1px 2px rgba(60,50,30,.12)' : 'none',
               },
             }, label))),
+          h('button', {
+            type: 'button', onClick: openCreate, disabled: !spaceId,
+            style: { ...fieldStyle, background: '#3f382e', color: '#fff', borderColor: '#3f382e', cursor: spaceId ? 'pointer' : 'default' },
+          }, '新建需求/缺陷'),
           h('input', {
             value: draft, placeholder: '搜索编号或标题', onChange: (event) => setDraft(event.target.value),
             style: { ...fieldStyle, width: 200 },
@@ -893,6 +933,16 @@ window.__ModuleLoader__.load({
                   : h('div', { style: { fontSize: 12, color: '#b3a893', padding: '18px 0', textAlign: 'center' } }, '暂无')),
               )
             })))),
+        createOpen ? h('div', { style: { position: 'fixed', inset: 0, zIndex: 66, background: 'rgba(35,30,22,.32)', display: 'grid', placeItems: 'center', padding: 24 }, onClick: () => setCreateOpen(false) },
+          h('div', { role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'create-workitem-title', onClick: (event) => event.stopPropagation(), style: { width: 480, maxWidth: '94vw', background: '#fff', borderRadius: 14, padding: 20, boxShadow: '0 18px 50px rgba(50,40,25,.24)' } },
+            h('h2', { id: 'create-workitem-title', style: { margin: '0 0 14px', fontSize: 16 } }, category === 'Bug' ? '新建缺陷' : '新建需求'),
+            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '标题 *'), h('input', { autoFocus: true, value: createForm.subject, onChange: (event) => setCreateForm((form) => ({ ...form, subject: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } })),
+            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '负责人 *'), h('select', { required: true, value: createForm.assignedTo, onChange: (event) => setCreateForm((form) => ({ ...form, assignedTo: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } }, h('option', { value: '' }, members.length ? '请选择项目成员' : '暂无可选成员'), members.map((member) => h('option', { key: member.id, value: member.id }, member.name)))),
+            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '描述'), h('textarea', { rows: 5, value: createForm.description, onChange: (event) => setCreateForm((form) => ({ ...form, description: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical' } })),
+            createError ? h('div', { role: 'alert', style: { color: '#a3342b', fontSize: 12, marginBottom: 10 } }, createError) : null,
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
+              h('button', { type: 'button', onClick: () => setCreateOpen(false), style: fieldStyle }, '取消'),
+              h('button', { type: 'button', onClick: submitCreate, disabled: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length, style: { ...fieldStyle, background: '#3f382e', color: '#fff', opacity: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length ? .55 : 1 } }, creating ? '创建中…' : '创建')))) : null,
         settings ? h(Settings, { initial: settings, orgs, onSave: saveSettings, onClose: () => setSettings(null) }) : null,
         detail ? h(Detail, {
           serial: detail.serial,

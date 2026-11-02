@@ -7,11 +7,12 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 ## ✨ 功能
 
 - 📋 **按状态看板** - 需求 / 缺陷分栏，按状态列展示，支持关键词与编号检索
+- ✍️ **新建需求 / 缺陷** - 选择项目、类别和项目成员负责人；支持标题与描述，不支持附件
 - 🔍 **详情抽屉** - 状态、负责人、创建人、类型、项目、时间、描述（富文本排版保留）、附件
 - 🖼️ **图片预览** - 描述内图片经 Host 换取 OSS 直链，点开弹层等比预览，不跳转不下载
 - 🚀 **一键派发** - 「处理」按钮选择工作区，直接起会话并预填 prompt
 - 📝 **改动留档** - `yunxiao_comment` 把每次改动写成需求评论，推送后把 Codeup 提交关联到需求
-- 🛠️ **原生工具** - `yunxiao_workitems`（查项目 / 工作项 / 状态）、`yunxiao_transition`（流转状态）、`yunxiao_comment`（评论留档 / 关联提交）
+- 🛠️ **原生工具** - `yunxiao_workitems`（查询）、`yunxiao_project_members`（选择负责人）、`yunxiao_create_workitem`（创建 Req/Bug）、`yunxiao_transition`（流转状态）、`yunxiao_comment`（评论留档 / 关联提交）
 - 🔐 **令牌只在 Host** - 令牌不出 Host 进程，前端不回显、不进日志
 - 🔄 **版本更新提醒** - 右上角显示当前版本；npm 有新版本时显示最新版号并可一键升级（重启 DSH 生效）
 
@@ -56,6 +57,10 @@ CLI 只装依赖，还要在「插件」页启用 `dsh-yunxiao-taskboard` 组合
 
 请求头固定 `x-yunxiao-token`。
 
+## ✍️ 新建需求与缺陷
+
+看板中的「新建需求/缺陷」会按当前项目与类别创建工作项。负责人必须从该项目成员列表中明确选择；AI 使用 `yunxiao_project_members` 查询后，再通过 `yunxiao_create_workitem` 创建，不能猜测负责人 ID。首版不含附件上传。
+
 ## 📝 需求改动留档
 
 开发需求/缺陷时用 `yunxiao_comment` 把改动写进工作项评论列表，推送后把 Codeup 提交关联到工作项：
@@ -76,7 +81,7 @@ yunxiao_comment({
 ## 🧪 开发
 
 ```bash
-node --test        # 37 个用例，覆盖连接解析、检索条件、组织列表、流转校验、评论留档、提交关联与版本比较
+node --test        # 覆盖创建校验、成员选择、连接解析、看板、流转、评论关联与版本比较
 ```
 
 发布（`files` 白名单已限定包内容，`prepublishOnly` 先跑测试）：

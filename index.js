@@ -233,6 +233,8 @@ export function apply(ctx, config) {
     },
     transition: (input) => client(input?.orgId).transition(input),
     comment: (input) => client(input?.orgId).comment(input),
+    projectMembers: ({ spaceId, orgId } = {}) => client(orgId).projectMembers(spaceId),
+    createWorkitem: (input) => client(input?.orgId).createWorkitem(input),
   }
 
   ctx.effect(() => ctx.webServer.register({
@@ -260,11 +262,16 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'yunxiao_workitems',
-    description: 'Read Yunxiao projects, work items, or status lists. This is the native Yunxiao tool: prefer it over curl or the yunxiao-dev skill. action=detail reads one work item (description HTML, images, attachments) by id/serial; action=search lists board columns. Call transitions before changing a status. Do not guess status names.',
+    description: 'Read Yunxiao projects, work items, or status lists. This is the native Yunxiao tool: prefer it over curl or the yunxiao-dev skill. action=detail reads one work item (description HTML, images, attachments) by id/serial; action=search lists board columns. Call transitions before changing a status. Do not guess status names. For `action=project_members`, list selectable project members. For `action=create`, create a Req/Bug and require an explicitly chosen `assignedTo` user ID; call project_members first rather than guessing the assignee.',
     parameters: {
-      action: { type: 'string', required: true, enum: ['projects', 'search', 'detail', 'transitions'] },
+      action: { type: 'string', required: true, enum: ['projects', 'search', 'detail', 'transitions', 'project_members', 'create'] },
       spaceId: { type: 'string' },
+      orgId: { type: 'string' },
       category: { type: 'string', enum: ['Req', 'Bug'] },
+      subject: { type: 'string' },
+      description: { type: 'string' },
+      assignedTo: { type: 'string', description: 'Selected project member userId; never invent one' },
+      workitemTypeId: { type: 'string', description: 'Optional explicit type id if no unique default is available' },
       q: { type: 'string' },
       priority: { type: 'string', enum: ['urgent', 'high', 'medium', 'low'] },
       id: { type: 'string', description: 'Work item id or serial number such as EVXU-1095' },
@@ -272,10 +279,39 @@ export function apply(ctx, config) {
     output: { schema: { type: 'object', additionalProperties: true }, render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }] },
     async execute(args) {
       if (args.action === 'projects') return { projects: await methods.projects(args.orgId) }
+      if (args.action === 'project_members') return { members: await methods.projectMembers({ spaceId: args.spaceId, orgId: args.orgId }) }
+      if (args.action === 'create') return methods.createWorkitem(args)
       if (args.action === 'detail') return methods.detail({ id: args.id, orgId: args.orgId })
       if (args.action === 'transitions') return { statuses: await methods.transitions({ id: args.id, orgId: args.orgId }) }
       return methods.board({ spaceId: args.spaceId, category: args.category ?? 'Req', q: args.q, priority: args.priority, orgId: args.orgId })
     },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'yunxiao_project_members',
+    description: 'List selectable Yunxiao project members. Use before creating a requirement or defect and ask the user to choose a member; never guess a userId.',
+    parameters: {
+      spaceId: { type: 'string', required: true },
+      orgId: { type: 'string' },
+    },
+    output: { schema: { type: 'object', additionalProperties: true }, render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }] },
+    execute: (args) => methods.projectMembers(args),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'yunxiao_create_workitem',
+    description: 'Create a Yunxiao requirement or defect. assignedTo is mandatory: call yunxiao_project_members first, ask the user which member to assign, then pass that member userId. Never invent a default assignee. workitemTypeId may be omitted only when exactly one enabled default type exists. No attachments are supported yet.',
+    parameters: {
+      spaceId: { type: 'string', required: true },
+      category: { type: 'string', required: true, enum: ['Req', 'Bug'] },
+      subject: { type: 'string', required: true },
+      description: { type: 'string' },
+      assignedTo: { type: 'string', required: true, description: 'userId of the explicitly selected project member' },
+      workitemTypeId: { type: 'string' },
+      orgId: { type: 'string' },
+    },
+    output: { schema: { type: 'object', additionalProperties: true }, render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }] },
+    execute: (args) => methods.createWorkitem(args),
   }))
 
   ctx.tools.register(defineTool({

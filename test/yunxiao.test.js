@@ -41,6 +41,60 @@ test('missing token is an error', () => {
   assert.throws(() => resolveConnection({}, {}), /令牌/)
 })
 
+test('creation rejects ambiguous or unavailable default types and accepts explicit type ids', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/workitemTypes', json: [{ id: 'one', categoryId: 'Req', enable: true, defaultType: true }, { id: 'two', categoryId: 'Req', enable: true, defaultType: true }] },
+    { match: '/workitems', json: { id: 'created' } },
+  ])
+  const client = createClient({ token: 'cfg', organizationId: 'org' }, { fetch })
+  await assert.rejects(client.createWorkitem({ spaceId: 's', category: 'Req', subject: 'x', assignedTo: 'u' }), /多个默认/)
+  assert.equal(calls.length, 1)
+  await client.createWorkitem({ spaceId: 's', category: 'Req', subject: 'x', assignedTo: 'u', workitemTypeId: 'chosen' })
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].body.workitemTypeId, 'chosen')
+})
+
+test('creation validates default workitem type, category, assignee and title before writing', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/workitemTypes', json: [
+      { id: 'req-type', categoryId: 'Req', enable: true, defaultType: true },
+      { id: 'bug-type', categoryId: 'Bug', enable: true, defaultType: true },
+    ] },
+    { match: '/workitems', json: { id: 'created-id', serialNumber: 'REQ-100' } },
+  ])
+  const client = createClient({ token: 'cfg', organizationId: 'org', baseUrl: 'https://yun.example' }, { fetch })
+  assert.deepEqual(await client.createWorkitem({ spaceId: 'space', category: 'Req', subject: '  New requirement ', assignedTo: 'user-1' }), {
+    id: 'created-id', serialNumber: 'REQ-100', subject: 'New requirement', category: 'Req',
+  })
+  assert.deepEqual(calls.map(({ url, init, body }) => ({ url, method: init.method, body })), [
+    { url: 'https://yun.example/oapi/v1/projex/organizations/org/workitemTypes?categories=Req', method: 'GET', body: undefined },
+    { url: 'https://yun.example/oapi/v1/projex/organizations/org/workitems', method: 'POST', body: {
+      spaceId: 'space', category: 'Req', workitemTypeId: 'req-type', subject: 'New requirement', assignedTo: 'user-1',
+    } },
+  ])
+  const before = calls.length
+  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Task', subject: 'no', assignedTo: 'user-1' }), /Req 或 Bug/)
+  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Req', subject: 'no', assignedTo: '' }), /负责人/)
+  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Req', subject: '  ', assignedTo: 'user-1' }), /标题/)
+  assert.equal(calls.length, before)
+})
+
+test('project members are normalized to selectable ids and names', async () => {
+  const { fetch } = fakeFetch([{ match: '/members', json: [{ userId: 'u1', userName: 'Alice' }, { userId: 'u2', userName: 'Bob' }] }])
+  const client = createClient({ token: 'cfg', organizationId: 'org' }, { fetch })
+  assert.deepEqual(await client.projectMembers('space'), [{ id: 'u1', name: 'Alice' }, { id: 'u2', name: 'Bob' }])
+})
+
+test('creation and project member endpoints support both editions', () => {
+  const center = resolveConnection({ token: 'cfg', organizationId: 'org' }, {})
+  assert.equal(center.createWorkitem, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/workitems')
+  assert.equal(center.workitemTypes, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/workitemTypes')
+  assert.equal(center.projectMembers('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/members')
+  const region = resolveConnection({ token: 'cfg', edition: 'region', baseUrl: 'https://region.example' }, {})
+  assert.equal(region.createWorkitem, 'https://region.example/oapi/v1/projex/workitems')
+  assert.equal(region.projectMembers('space'), 'https://region.example/oapi/v1/projex/projects/space/members')
+})
+
 import { cardOf, searchBody, matchStatus, detailOf, statusForPhase } from '../server/board.js'
 
 test('search body filters by status and subject', () => {
