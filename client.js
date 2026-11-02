@@ -70,11 +70,8 @@ window.__ModuleLoader__.load({
     function versionTitle(info, state) {
       if (state?.status === 'failed') return `升级失败：${state.error}`
       if (state?.status === 'done') return '重启 DSH 后新版本生效'
-      if (info.updateAvailable && !info.canUpdate) {
-        return info.linked
-          ? '本地开发安装，请用 pnpm 更新依赖'
-          : '当前环境不支持一键升级，请在插件页或 DSH Desktop 升级'
-      }
+      if (info.updateAvailable && !info.canUpdate) return '当前环境不支持一键升级，请在插件页升级'
+      if (info.updateAvailable && info.linked) return '升级会用 npm 版本替换当前本地开发链接'
       return '插件版本'
     }
 

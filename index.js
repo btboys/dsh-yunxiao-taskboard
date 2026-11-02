@@ -1,11 +1,11 @@
 import { createRequire } from 'node:module'
-import { realpathSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { realpathSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { createClient, listOrganizations } from './server/yunxiao.js'
-import { PACKAGE, compareVersions, fetchLatest, isLocalSpec, readDependencySpec, readVersion, resolveProfile } from './server/version.js'
+import { PACKAGE, compareVersions, desktopCliCandidates, fetchLatest, isLocalSpec, readDependencySpec, readVersion, resolveProfile } from './server/version.js'
 
 // ponytail: linked workspace cannot resolve dsh's own packages; resolve from the dsh entry instead
 function hostRequire() {
@@ -61,6 +61,8 @@ const loadedVersion = readVersion(PACKAGE_FILE)
 // CLI 升级需要 profile；识别不到就不提供升级入口，免得改错 profile
 const profile = resolveProfile()
 const isDesktop = Boolean(process.versions.electron) || process.env.ELECTRON_RUN_AS_NODE !== undefined
+// 桌面端用自带 CLI 管理 desktop profile（普通 dsh CLI 会拒绝 desktop profile）
+const desktopCli = isDesktop ? desktopCliCandidates().find((file) => existsSync(file)) || '' : ''
 
 // 用当前 dsh 入口拉起 CLI（子系统 PATH 里未必有 dsh），找不到再退回裸命令
 function dshEntry() {
@@ -74,12 +76,13 @@ function dshEntry() {
 
 function runPluginCommand(args, timeoutMs = 180_000) {
   return new Promise((resolve) => {
-    const entry = dshEntry()
-    const command = entry ? process.execPath : 'dsh'
-    const argv = [...(entry ? [entry] : []), 'plugin', '--profile', profile, ...args]
+    const entry = desktopCli ? '' : dshEntry()
+    const command = desktopCli || (entry ? process.execPath : 'dsh')
+    const argv = [...(desktopCli ? [] : entry ? [entry] : []), 'plugin', '--profile', profile, ...args]
     const child = spawn(command, argv, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: !entry && process.platform === 'win32',
+      // .cmd 包装脚本必须过 shell；web 端 PATH 里没有 dsh 时也走 shell
+      shell: process.platform === 'win32' && (desktopCli ? /\.(cmd|bat)$/i.test(desktopCli) : !entry),
     })
     let output = ''
     const collect = (chunk) => { output = (output + String(chunk)).slice(-4000) }
@@ -142,10 +145,7 @@ export function apply(ctx, config) {
 
   async function upgrade() {
     if (!profile) throw new Error('识别不到当前 DSH profile，请手动升级')
-    if (isDesktop) throw new Error('桌面版请在 DSH Desktop 的插件页升级')
-    if (isLocalSpec(readDependencySpec(join(HOME, 'profiles', profile, 'package.json')))) {
-      throw new Error('当前是本地开发安装，请用 pnpm 更新依赖')
-    }
+    if (isDesktop && !desktopCli) throw new Error('找不到桌面版 CLI，请在 DSH Desktop 的插件页升级')
     // 点升级时重查一次，避免发完新版本还拿缓存说不更新；网络抖动则退回上次结果
     const target = (await latestVersion(true)) || latestCheck.version
     if (!target) throw new Error('读取 npm 最新版本失败，请检查网络')
@@ -163,7 +163,7 @@ export function apply(ctx, config) {
     version: async () => {
       const current = readVersion(PACKAGE_FILE)
       const latest = await latestVersion()
-      // link/file 安装是本地开发副本，一键升级会把开发链接换成 npm 版本，先藏起按钮
+      // link/file 安装也能升，只是会把开发链接换成 npm 版本（前端在 title 里提示）
       const local = profile ? isLocalSpec(readDependencySpec(join(HOME, 'profiles', profile, 'package.json'))) : false
       return {
         current,
@@ -172,7 +172,7 @@ export function apply(ctx, config) {
         // 磁盘版本 > 进程启动时的版本 = 已升级未重启
         pendingRestart: Boolean(current) && compareVersions(current, loadedVersion) > 0,
         updateAvailable: Boolean(latest) && compareVersions(latest, current) > 0,
-        canUpdate: Boolean(profile) && !isDesktop && !local,
+        canUpdate: Boolean(profile) && (!isDesktop || Boolean(desktopCli)),
       }
     },
     update: () => updatePlugin(),

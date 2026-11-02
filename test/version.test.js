@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { compareVersions, fetchLatest, isLocalSpec, isVersion, readDependencySpec, readVersion, resolveProfile } from '../server/version.js'
+import { compareVersions, desktopCliCandidates, fetchLatest, isLocalSpec, isVersion, readDependencySpec, readVersion, resolveProfile } from '../server/version.js'
 
 test('compareVersions orders releases and prereleases', () => {
   assert.equal(compareVersions('1.2.0', '1.3.0'), -1)
@@ -79,6 +79,22 @@ test('readDependencySpec and isLocalSpec tell local development installs from re
   assert.equal(isLocalSpec('workspace:*'), true)
   assert.equal(isLocalSpec('^1.2.0'), false)
   assert.equal(isLocalSpec(''), false)
+})
+
+test('desktopCliCandidates derives the desktop CLI from resources or argv', () => {
+  const resources = '/Applications/DSH/Contents/Resources'
+  assert.ok(desktopCliCandidates({ argv: [], resourcesPath: resources })
+    .includes(join(resources, 'runtime', 'cli', 'bin', 'dsh')))
+  const fromArgv = desktopCliCandidates({
+    argv: [
+      'electron', '/x/index.js', '/x/dsh', '/Users/x/.dsh/profiles/desktop',
+      `${resources}/runtime/primary-runtime`, `${resources}/runtime/bin`,
+    ],
+    resourcesPath: undefined,
+  })
+  assert.deepEqual(fromArgv, ['dsh', 'dsh.cmd', 'dsh.exe'].map((name) => join(resources, 'runtime', 'cli', 'bin', name)))
+  // web 端 argv 没有桌面特征，返回空
+  assert.deepEqual(desktopCliCandidates({ argv: ['node', '/x/bin.js', 'web'], resourcesPath: undefined }), [])
 })
 
 test('resolveProfile finds the profile from web, --profile and desktop argv shapes', () => {

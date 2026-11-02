@@ -1,5 +1,6 @@
 // 版本自检：读本包版本、查 npm 最新版、解析当前 profile。纯函数，便于测试。
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 export const PACKAGE = 'dsh-yunxiao-taskboard'
 // 国内直连 npm 官方源经常超时，和 dsh-context 一样按顺序问，先答上的为准
@@ -102,4 +103,16 @@ export function resolveProfile(argv = process.argv) {
     if (found) return pickProfile(found[1])
   }
   return ''
+}
+
+// 桌面端自带一份能管理 desktop profile 的 CLI（内部带 bundled pnpm）：
+// 从 resources 或 argv 里的 runtime/bin、runtime/primary-runtime 反推 runtime 目录。
+export function desktopCliCandidates({ argv = process.argv, resourcesPath = process.resourcesPath } = {}) {
+  const roots = new Set()
+  if (typeof resourcesPath === 'string' && resourcesPath) roots.add(resourcesPath)
+  for (const arg of argv) {
+    const found = /^(.*)[\\/]runtime[\\/](?:bin|primary-runtime)$/.exec(String(arg))
+    if (found) roots.add(found[1])
+  }
+  return [...roots].flatMap((root) => ['dsh', 'dsh.cmd', 'dsh.exe'].map((name) => join(root, 'runtime', 'cli', 'bin', name)))
 }
