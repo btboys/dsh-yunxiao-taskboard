@@ -9,6 +9,7 @@ test('detail view renders plain Markdown descriptions as formatted HTML', async 
   assert.match(client, /markdownToHtml\(detail\.description\)/)
   assert.match(client, /const escape = \(text\) => text\.replace\(\/\[&<>"'\]\/g/)
   assert.match(client, /sanitizeHtml\(markdownToHtml\(detail\.description\)\)/)
+  assert.ok(client.includes("detail.descriptionHtml && /<\\/?[a-z][^>]*>/i.test(detail.descriptionHtml)"))
 })
 
 test('create type requests use a generation token and always release loading for the current request', async () => {

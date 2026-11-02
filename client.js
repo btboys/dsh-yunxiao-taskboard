@@ -396,7 +396,7 @@ window.__ModuleLoader__.load({
                   overflowX: 'auto',
                 },
                 dangerouslySetInnerHTML: {
-                  __html: detail.descriptionHtml
+                  __html: detail.descriptionHtml && /<\/?[a-z][^>]*>/i.test(detail.descriptionHtml)
                     ? sanitizeHtml(detail.descriptionHtml)
                     : sanitizeHtml(markdownToHtml(detail.description)),
                 },
