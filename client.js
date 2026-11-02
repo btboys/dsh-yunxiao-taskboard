@@ -445,6 +445,7 @@ window.__ModuleLoader__.load({
       })
       const [saving, setSaving] = useState(false)
       const [error, setError] = useState(null)
+      const [showPermissions, setShowPermissions] = useState(false)
       const inputStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid #e6e2d9', borderRadius: 7, padding: '7px 10px', fontSize: 13, outline: 'none' }
 
       function field(key, label, extra) {
@@ -490,6 +491,25 @@ window.__ModuleLoader__.load({
               style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 28, height: 28, cursor: 'pointer', fontSize: 15 },
             }, '×')),
           field('token', `令牌${initial.hasToken ? '（已配置，留空不修改）' : ''}`, { type: 'password', placeholder: 'x-yunxiao-token' }),
+          h('button', {
+            type: 'button', onClick: () => setShowPermissions(true),
+            style: { display: 'block', marginTop: -8, marginBottom: 12, padding: 0, border: 0, background: 'none', color: '#8b7551', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' },
+          }, '查看权限要求'),
+          showPermissions ? h('div', {
+            role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-permissions-title',
+            onClick: () => setShowPermissions(false),
+            style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
+          }, h('div', {
+            onClick: (event) => event.stopPropagation(),
+            style: { width: 400, maxWidth: '94vw', background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '14px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
+          },
+            h('div', { id: 'yunxiao-permissions-title', style: { fontSize: 15, fontWeight: 650, marginBottom: 10 } }, '运行令牌权限要求'),
+            h('div', { style: { color: '#625b50' } },
+              h('p', { style: { margin: '0 0 8px' } }, '令牌必须具备项目和工作项的读取权限，否则插件无法读取并展示云效数据。中心版还需填写组织 ID。'),
+              h('p', { style: { margin: '0 0 8px' } }, '组织列表需要组织读取权限；没有该权限时，可使用已填写的当前组织 ID，但无法浏览其他组织。'),
+              h('p', { style: { margin: 0 } }, '如需创建工作项、流转状态或发表评论，还需具备相应的工作项写入权限；缺少写权限时这些操作会失败。')),
+            h('button', { type: 'button', onClick: () => setShowPermissions(false), style: { display: 'block', margin: '16px 0 0 auto', border: 0, borderRadius: 7, padding: '7px 14px', background: '#3f382e', color: '#fff', cursor: 'pointer' } }, '知道了')))
+            : null,
           field('organizationId', '组织 ID（中心版必填，Region 版留空）'),
           field('baseUrl', 'API 域名（留空用默认 openapi-rdc.aliyuncs.com）'),
           h('label', { style: { display: 'block', marginBottom: 14 } },
@@ -534,6 +554,7 @@ window.__ModuleLoader__.load({
       const [dragging, setDragging] = useState(null)
       const [dropTarget, setDropTarget] = useState(null)
       const [settings, setSettings] = useState(null)
+      const [helpOpen, setHelpOpen] = useState(false)
       const [orgs, setOrgs] = useState({ organizations: [], organizationId: '', edition: '', error: null })
       const [versionInfo, setVersionInfo] = useState(null)
       const [upgradeState, setUpgradeState] = useState(null)
@@ -925,7 +946,11 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button', onClick: openSettings,
             style: { ...fieldStyle, cursor: 'pointer', color: '#5c5346' },
-          }, '设置'))),
+          }, '设置'),
+          h('button', {
+            type: 'button', onClick: () => setHelpOpen(true),
+            style: { ...fieldStyle, cursor: 'pointer', color: '#5c5346' },
+          }, '帮助'))),
 
         note ? h('div', {
           style: {
@@ -1003,6 +1028,32 @@ window.__ModuleLoader__.load({
                   : h('div', { style: { fontSize: 12, color: '#b3a893', padding: '18px 0', textAlign: 'center' } }, '暂无')),
               )
             })))),
+        helpOpen ? h('div', {
+          role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-help-title',
+          onClick: () => setHelpOpen(false),
+          style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
+        }, h('div', {
+          onClick: (event) => event.stopPropagation(),
+          style: { width: 620, maxWidth: '94vw', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '13px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', marginBottom: 16 } },
+            h('h2', { id: 'yunxiao-help-title', style: { margin: 0, fontSize: 18, fontWeight: 650 } }, '云效插件使用帮助'),
+            h('span', { style: { flex: 1 } }),
+            h('button', { type: 'button', onClick: () => setHelpOpen(false), 'aria-label': '关闭帮助', style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 30, height: 30, cursor: 'pointer', fontSize: 16 } }, '×')),
+          [
+            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片与附件；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；创建需求或缺陷；将工作项派发到工作区处理。'],
+            ['看板使用', '先选择组织（中心版）和项目，再切换「需求 / 缺陷」。输入编号或标题后点「刷新」搜索；优先级和负责人筛选会立即生效。拖动卡片到目标状态列即可流转。'],
+            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述和附件。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
+            ['创建工作项', '点击「新建」填写标题、描述和负责人，创建需求或缺陷；创建完成后可在看板中查看。负责人列表和工作项类型由所选项目加载。'],
+            ['派发到工作区', '点击开放状态工作项上的「处理」，选择工作区后会启动会话并预填工作提示。插件会尝试将工作项流转到开发阶段；完成并推送后可使用 yunxiao_transition 更新状态。'],
+            ['评论与提交关联', '使用 yunxiao_comment 将改动说明写入工作项评论；推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
+            ['令牌与组织权限', '令牌需具备项目和工作项读取权限，否则无法读取看板数据。中心版需填写组织 ID；组织列表需要组织读取权限，没有该权限时可使用已填写的组织 ID，但无法浏览其他组织。创建、状态流转、评论等写入功能还需相应写权限。令牌只保存在 Host 侧，不会回显到看板。'],
+            ['配置入口', '点击「设置」填写云效个人访问令牌、组织 ID、API 域名和版本。中心版通常需要组织 ID；Region 版组织 ID 留空，并按需填写组织 API 域名。'],
+          ].map(([title, text]) => h('section', { key: title, style: { padding: '12px 0', borderTop: '1px solid #eee9df' } },
+            h('div', { style: { fontWeight: 650, color: '#3f382e', marginBottom: 3 } }, title),
+            h('div', { style: { color: '#625b50' } }, text))),
+          h('div', { style: { fontSize: 11.5, color: '#a1937c', borderTop: '1px solid #eee9df', paddingTop: 12 } }, '具体可用功能取决于当前令牌的云效权限及所选工作区权限。')))
+          : null,
         createOpen ? h('div', { style: { position: 'fixed', inset: 0, zIndex: 66, background: 'rgba(35,30,22,.32)', display: 'grid', placeItems: 'center', padding: 24 }, onClick: () => setCreateOpen(false) },
           h('div', { role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'create-workitem-title', onClick: (event) => event.stopPropagation(), style: { width: 480, maxWidth: '94vw', background: '#fff', borderRadius: 14, padding: 20, boxShadow: '0 18px 50px rgba(50,40,25,.24)' } },
             h('h2', { id: 'create-workitem-title', style: { margin: '0 0 14px', fontSize: 16 } }, category === 'Bug' ? '新建缺陷' : '新建需求'),
@@ -1014,6 +1065,32 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
               h('button', { type: 'button', onClick: () => setCreateOpen(false), style: fieldStyle }, '取消'),
               h('button', { type: 'button', onClick: submitCreate, disabled: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError, style: { ...fieldStyle, background: '#3f382e', color: '#fff', opacity: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError ? .55 : 1 } }, creating ? '创建中…' : '创建')))) : null,
+        helpOpen ? h('div', {
+          role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-help-title',
+          onClick: () => setHelpOpen(false),
+          style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
+        }, h('div', {
+          onClick: (event) => event.stopPropagation(),
+          style: { width: 620, maxWidth: '94vw', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '13px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', marginBottom: 16 } },
+            h('h2', { id: 'yunxiao-help-title', style: { margin: 0, fontSize: 18, fontWeight: 650 } }, '云效插件使用帮助'),
+            h('span', { style: { flex: 1 } }),
+            h('button', { type: 'button', onClick: () => setHelpOpen(false), 'aria-label': '关闭帮助', style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 30, height: 30, cursor: 'pointer', fontSize: 16 } }, '×')),
+          [
+            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片与附件；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；创建需求或缺陷；将工作项派发到工作区处理。'],
+            ['看板使用', '先选择组织（中心版）和项目，再切换「需求 / 缺陷」。输入编号或标题后点「刷新」搜索；优先级和负责人筛选会立即生效。拖动卡片到目标状态列即可流转。'],
+            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述和附件。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
+            ['创建工作项', '点击「新建」填写标题、描述和负责人，创建需求或缺陷；创建完成后可在看板中查看。负责人列表和工作项类型由所选项目加载。'],
+            ['派发到工作区', '点击开放状态工作项上的「处理」，选择工作区后会启动会话并预填工作提示。插件会尝试将工作项流转到开发阶段；完成并推送后可使用 yunxiao_transition 更新状态。'],
+            ['评论与提交关联', '使用 yunxiao_comment 将改动说明写入工作项评论；推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
+            ['令牌与组织权限', '令牌需具备项目和工作项读取权限，否则无法读取看板数据。中心版需填写组织 ID；组织列表需要组织读取权限，没有该权限时可使用已填写的组织 ID，但无法浏览其他组织。创建、状态流转、评论等写入功能还需相应写权限。令牌只保存在 Host 侧，不会回显到看板。'],
+            ['配置入口', '点击「设置」填写云效个人访问令牌、组织 ID、API 域名和版本。中心版通常需要组织 ID；Region 版组织 ID 留空，并按需填写组织 API 域名。'],
+          ].map(([title, text]) => h('section', { key: title, style: { padding: '12px 0', borderTop: '1px solid #eee9df' } },
+            h('div', { style: { fontWeight: 650, color: '#3f382e', marginBottom: 3 } }, title),
+            h('div', { style: { color: '#625b50' } }, text))),
+          h('div', { style: { fontSize: 11.5, color: '#a1937c', borderTop: '1px solid #eee9df', paddingTop: 12 } }, '具体可用功能取决于当前令牌的云效权限及所选工作区权限。')))
+          : null,
         settings ? h(Settings, { initial: settings, orgs, onSave: saveSettings, onClose: () => setSettings(null) }) : null,
         detail ? h(Detail, {
           serial: detail.serial,
