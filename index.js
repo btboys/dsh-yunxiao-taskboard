@@ -309,7 +309,7 @@ export function apply(ctx, config) {
       orgId: { type: 'string' },
     },
     output: { schema: { type: 'object', additionalProperties: true }, render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }] },
-    execute: (args) => methods.workitemTypes(args),
+    execute: async (args) => ({ types: await methods.workitemTypes(args) }),
   }))
 
   ctx.tools.register(defineTool({

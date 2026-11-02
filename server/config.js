@@ -28,8 +28,8 @@ export function resolveConnection(config = {}, env = process.env) {
       ? `${root}/workitems`
       : `${baseUrl}/oapi/v1/projex/workitems`,
     projectWorkitemTypes: (id) => edition === 'center'
-      ? `${root}/projects/${encodeURIComponent(id)}/getWorkitemType`
-      : `${baseUrl}/oapi/v1/projex/projects/${encodeURIComponent(id)}/getWorkitemType`,
+      ? `${root}/projects/${encodeURIComponent(id)}/workitemTypes`
+      : `${baseUrl}/oapi/v1/projex/projects/${encodeURIComponent(id)}/workitemTypes`,
     projectMembers: (id) => edition === 'center'
       ? `${root}/projects/${encodeURIComponent(id)}/members`
       : `${baseUrl}/oapi/v1/projex/projects/${encodeURIComponent(id)}/members`,

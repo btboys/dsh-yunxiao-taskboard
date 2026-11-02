@@ -47,12 +47,11 @@ export function createClient(config, { fetch, env } = {}) {
     if (!spaceId) throw new Error('请选择项目')
     if (!['Req', 'Bug'].includes(category)) throw new Error('工作项类型仅支持 Req 或 Bug')
     const url = new URL(connection.projectWorkitemTypes(spaceId))
-    url.searchParams.set('spaceType', 'Project')
     url.searchParams.set('category', category)
     const { json } = await request(url.toString())
     return (Array.isArray(json) ? json : json.workitemTypes ?? [])
-      .filter((item) => item?.enable !== false && item?.categoryIdentifier === category && item?.identifier)
-      .map((item) => ({ id: item.identifier, name: item.name || item.identifier }))
+      .filter((item) => item?.enable !== false && item?.id && (!item.categoryId || item.categoryId === category))
+      .map((item) => ({ id: item.id, name: item.name || item.id }))
   }
   async function createWorkitem({ spaceId, category, subject, description, assignedTo, workitemTypeId } = {}) {
     const title = typeof subject === 'string' ? subject.trim() : ''

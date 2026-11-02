@@ -61,14 +61,14 @@ test('missing token is an error', () => {
 })
 
 test('workitem types are project- and category-scoped, active, and normalized', async () => {
-  const { fetch, calls } = fakeFetch([{ match: '/getWorkitemType', json: { workitemTypes: [
-    { identifier: 'req-id', name: '业务需求', categoryIdentifier: 'Req', enable: true },
-    { identifier: 'bug-id', name: '缺陷', categoryIdentifier: 'Bug', enable: true },
-    { identifier: 'disabled', name: '停用', categoryIdentifier: 'Req', enable: false },
-  ] } }])
+  const { fetch, calls } = fakeFetch([{ match: '/workitemTypes', json: [
+    { id: 'req-id', name: '业务需求', categoryId: 'Req', enable: true },
+    { id: 'bug-id', name: '缺陷', categoryId: 'Bug', enable: true },
+    { id: 'disabled', name: '停用', categoryId: 'Req', enable: false },
+  ] }])
   const client = createClient({ token: 'cfg', organizationId: 'org', baseUrl: 'https://yun.example' }, { fetch })
   assert.deepEqual(await client.workitemTypes('project/a', 'Req'), [{ id: 'req-id', name: '业务需求' }])
-  assert.equal(calls[0].url, 'https://yun.example/oapi/v1/projex/organizations/org/projects/project%2Fa/getWorkitemType?spaceType=Project&category=Req')
+  assert.equal(calls[0].url, 'https://yun.example/oapi/v1/projex/organizations/org/projects/project%2Fa/workitemTypes?category=Req')
   await assert.rejects(client.workitemTypes('project', 'Task'), /Req 或 Bug/)
 })
 
@@ -102,11 +102,11 @@ test('project members are normalized to selectable ids and names', async () => {
 test('creation and project member endpoints support both editions', () => {
   const center = resolveConnection({ token: 'cfg', organizationId: 'org' }, {})
   assert.equal(center.createWorkitem, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/workitems')
-  assert.equal(center.projectWorkitemTypes('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/getWorkitemType')
+  assert.equal(center.projectWorkitemTypes('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/workitemTypes')
   assert.equal(center.projectMembers('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/members')
   const region = resolveConnection({ token: 'cfg', edition: 'region', baseUrl: 'https://region.example' }, {})
   assert.equal(region.createWorkitem, 'https://region.example/oapi/v1/projex/workitems')
-  assert.equal(region.projectWorkitemTypes('space'), 'https://region.example/oapi/v1/projex/projects/space/getWorkitemType')
+  assert.equal(region.projectWorkitemTypes('space'), 'https://region.example/oapi/v1/projex/projects/space/workitemTypes')
   assert.equal(region.projectMembers('space'), 'https://region.example/oapi/v1/projex/projects/space/members')
 })
 
