@@ -859,10 +859,11 @@ window.__ModuleLoader__.load({
 
         h('div', {
           style: {
-            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12, flex: 'none',
+            display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, flex: 'none',
             background: '#fff', border: '1px solid #eae5da', borderRadius: 10, padding: '8px 10px',
           },
         },
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 } },
           orgs.organizations.length > 0 && orgs.edition !== 'region' ? h('select', {
             value: orgs.organizationId,
             title: orgs.error ? `组织列表读取失败：${orgs.error}` : '切换组织',
@@ -890,10 +891,11 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button', onClick: openCreate, disabled: !spaceId,
             style: { ...fieldStyle, background: '#3f382e', color: '#fff', borderColor: '#3f382e', cursor: spaceId ? 'pointer' : 'default' },
-          }, '新建需求/缺陷'),
+          }, '新建需求/缺陷')),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 } },
           h('input', {
             value: draft, placeholder: '搜索编号或标题', onChange: (event) => setDraft(event.target.value),
-            style: { ...fieldStyle, width: 200 },
+            style: { ...fieldStyle, width: 'auto', flex: '1 1 200px', minWidth: 120 },
           }),
           h('select', { value: priority, onChange: (event) => setPriority(event.target.value), style: fieldStyle },
             h('option', { value: '' }, '全部优先级'),
@@ -923,7 +925,7 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button', onClick: openSettings,
             style: { ...fieldStyle, cursor: 'pointer', color: '#5c5346' },
-          }, '设置')),
+          }, '设置'))),
 
         note ? h('div', {
           style: {
