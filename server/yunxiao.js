@@ -37,6 +37,38 @@ export function createClient(config, { fetch, env } = {}) {
   async function search(body) {
     return request(connection.workitemsSearch, { method: 'POST', body })
   }
+  async function projectMembers(spaceId) {
+    const { json } = await request(connection.projectMembers(spaceId))
+    return (Array.isArray(json) ? json : json.members ?? []).filter((member) => member?.userId).map((member) => ({
+      id: member.userId, name: member.userName || member.userId,
+    }))
+  }
+  async function createWorkitem({ spaceId, category, subject, description, assignedTo, workitemTypeId } = {}) {
+    const title = typeof subject === 'string' ? subject.trim() : ''
+    if (!spaceId) throw new Error('请选择项目')
+    if (!['Req', 'Bug'].includes(category)) throw new Error('工作项类型仅支持 Req 或 Bug')
+    if (!title) throw new Error('请输入工作项标题')
+    if (typeof assignedTo !== 'string' || !assignedTo.trim()) throw new Error('请选择负责人')
+    if (description != null && typeof description !== 'string') throw new Error('描述必须是文本')
+    if (description?.length > 100000) throw new Error('描述不能超过 100000 个字符')
+    let typeId = workitemTypeId
+    if (typeId != null && (typeof typeId !== 'string' || !typeId.trim())) throw new Error('工作项类型 ID 无效')
+    if (typeId == null) {
+      const url = `${connection.workitemTypes}?categories=${encodeURIComponent(category)}`
+      const { json } = await request(url)
+      const types = (Array.isArray(json) ? json : json.workitemTypes ?? json.types ?? []).filter((item) => item?.enable !== false && item?.categoryId === category)
+      const defaults = types.filter((item) => item.defaultType === true)
+      if (defaults.length !== 1) throw new Error(defaults.length ? '该类别有多个默认工作项类型，请显式指定' : '该类别没有唯一的默认工作项类型，请显式指定')
+      typeId = defaults[0].id
+    }
+    if (!typeId) throw new Error('请选择工作项类型')
+    const { json } = await request(connection.createWorkitem, { method: 'POST', body: {
+      spaceId, category, workitemTypeId: typeId, subject: title, assignedTo: assignedTo.trim(),
+      ...(description ? { description } : {}),
+    } })
+    if (!json.id) throw new Error('云效未返回新建工作项 ID，无法确认创建结果，请在云效中检查，勿直接重试')
+    return { id: json.id, ...(json.serialNumber ? { serialNumber: json.serialNumber } : {}), subject: title, category }
+  }
   // 代码库列表只用于把提交 URL 反查成关联接口要的代码库 id
   async function codeupRepositories() {
     const { json } = await request(connection.codeupRepositories)
@@ -73,6 +105,8 @@ export function createClient(config, { fetch, env } = {}) {
     return { id: status.id, label: status.name, category: query.category, total, cards: json.map(cardOf) }
   }
   return {
+    projectMembers,
+    createWorkitem,
     projects: async () => {
       const { json } = await request(connection.projectsSearch, { method: 'POST', body: { page: 1, perPage: 50 } })
       return json.map((p) => ({ id: p.id, name: p.name, code: p.customCode }))
