@@ -43,6 +43,17 @@ export function createClient(config, { fetch, env } = {}) {
       id: member.userId, name: member.userName || member.userId,
     }))
   }
+  async function workitemTypes(spaceId, category) {
+    if (!spaceId) throw new Error('请选择项目')
+    if (!['Req', 'Bug'].includes(category)) throw new Error('工作项类型仅支持 Req 或 Bug')
+    const url = new URL(connection.projectWorkitemTypes(spaceId))
+    url.searchParams.set('spaceType', 'Project')
+    url.searchParams.set('category', category)
+    const { json } = await request(url.toString())
+    return (Array.isArray(json) ? json : json.workitemTypes ?? [])
+      .filter((item) => item?.enable !== false && item?.categoryIdentifier === category && item?.identifier)
+      .map((item) => ({ id: item.identifier, name: item.name || item.identifier }))
+  }
   async function createWorkitem({ spaceId, category, subject, description, assignedTo, workitemTypeId } = {}) {
     const title = typeof subject === 'string' ? subject.trim() : ''
     if (!spaceId) throw new Error('请选择项目')
@@ -51,19 +62,9 @@ export function createClient(config, { fetch, env } = {}) {
     if (typeof assignedTo !== 'string' || !assignedTo.trim()) throw new Error('请选择负责人')
     if (description != null && typeof description !== 'string') throw new Error('描述必须是文本')
     if (description?.length > 100000) throw new Error('描述不能超过 100000 个字符')
-    let typeId = workitemTypeId
-    if (typeId != null && (typeof typeId !== 'string' || !typeId.trim())) throw new Error('工作项类型 ID 无效')
-    if (typeId == null) {
-      const url = `${connection.workitemTypes}?categories=${encodeURIComponent(category)}`
-      const { json } = await request(url)
-      const types = (Array.isArray(json) ? json : json.workitemTypes ?? json.types ?? []).filter((item) => item?.enable !== false && item?.categoryId === category)
-      const defaults = types.filter((item) => item.defaultType === true)
-      if (defaults.length !== 1) throw new Error(defaults.length ? '该类别有多个默认工作项类型，请显式指定' : '该类别没有唯一的默认工作项类型，请显式指定')
-      typeId = defaults[0].id
-    }
-    if (!typeId) throw new Error('请选择工作项类型')
+    if (typeof workitemTypeId !== 'string' || !workitemTypeId.trim()) throw new Error('请选择工作项类型')
     const { json } = await request(connection.createWorkitem, { method: 'POST', body: {
-      spaceId, category, workitemTypeId: typeId, subject: title, assignedTo: assignedTo.trim(),
+      spaceId, category, workitemType: workitemTypeId.trim(), subject: title, assignedTo: assignedTo.trim(),
       ...(description ? { description } : {}),
     } })
     if (!json.id) throw new Error('云效未返回新建工作项 ID，无法确认创建结果，请在云效中检查，勿直接重试')
@@ -106,6 +107,7 @@ export function createClient(config, { fetch, env } = {}) {
   }
   return {
     projectMembers,
+    workitemTypes,
     createWorkitem,
     projects: async () => {
       const { json } = await request(connection.projectsSearch, { method: 'POST', body: { page: 1, perPage: 50 } })

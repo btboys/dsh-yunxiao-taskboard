@@ -27,9 +27,9 @@ export function resolveConnection(config = {}, env = process.env) {
     createWorkitem: edition === 'center'
       ? `${root}/workitems`
       : `${baseUrl}/oapi/v1/projex/workitems`,
-    workitemTypes: edition === 'center'
-      ? `${root}/workitemTypes`
-      : `${baseUrl}/oapi/v1/projex/workitemTypes`,
+    projectWorkitemTypes: (id) => edition === 'center'
+      ? `${root}/projects/${encodeURIComponent(id)}/getWorkitemType`
+      : `${baseUrl}/oapi/v1/projex/projects/${encodeURIComponent(id)}/getWorkitemType`,
     projectMembers: (id) => edition === 'center'
       ? `${root}/projects/${encodeURIComponent(id)}/members`
       : `${baseUrl}/oapi/v1/projex/projects/${encodeURIComponent(id)}/members`,

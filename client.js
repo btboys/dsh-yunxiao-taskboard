@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-yunxiao-taskboard',
   factory(require) {
     const React = require('react')
-    const { useEffect, useState } = React
+    const { useEffect, useRef, useState } = React
     const h = React.createElement
     const SPACE_KEY = 'yunxiao.spaceId'
     // 状态列颜色按名字取；云端改状态名就回落到默认灰
@@ -70,8 +70,11 @@ window.__ModuleLoader__.load({
     function versionTitle(info, state) {
       if (state?.status === 'failed') return `升级失败：${state.error}`
       if (state?.status === 'done') return '重启 DSH 后新版本生效'
-      if (info.updateAvailable && !info.canUpdate) return '当前环境不支持一键升级，请在插件页升级'
-      if (info.updateAvailable && info.linked) return '升级会用 npm 版本替换当前本地开发链接'
+      if (info.updateAvailable && !info.canUpdate) {
+        return info.linked
+          ? '本地开发安装，请用 pnpm 更新依赖'
+          : '当前环境不支持一键升级，请在插件页或 DSH Desktop 升级'
+      }
       return '插件版本'
     }
 
@@ -245,6 +248,42 @@ window.__ModuleLoader__.load({
       return doc.body.innerHTML
     }
 
+    function markdownToHtml(markdown) {
+      const escape = (text) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+      const inline = (text) => escape(text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>')
+      const blocks = []
+      let paragraph = []
+      let list = []
+      const flushParagraph = () => {
+        if (paragraph.length) blocks.push(`<p>${inline(paragraph.join(' '))}</p>`)
+        paragraph = []
+      }
+      const flushList = () => {
+        if (list.length) blocks.push(`<ul>${list.map((item) => `<li>${inline(item)}</li>`).join('')}</ul>`)
+        list = []
+      }
+      for (const line of String(markdown || '').replace(/\r\n?/g, '\n').split('\n')) {
+        const heading = /^(#{1,6})\s+(.+)$/.exec(line)
+        const item = /^\s*[-*+]\s+(.+)$/.exec(line)
+        if (!line.trim() || heading || item) {
+          flushParagraph()
+          if (!item) flushList()
+          if (heading) blocks.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`)
+          if (item) list.push(item[1])
+        } else {
+          flushList()
+          paragraph.push(line)
+        }
+      }
+      flushParagraph()
+      flushList()
+      return blocks.join('') || '<p>（无描述）</p>'
+    }
+
     function formatSize(bytes) {
       if (!bytes && bytes !== 0) return ''
       if (bytes < 1024) return `${bytes} B`
@@ -359,7 +398,7 @@ window.__ModuleLoader__.load({
                 dangerouslySetInnerHTML: {
                   __html: detail.descriptionHtml
                     ? sanitizeHtml(detail.descriptionHtml)
-                    : (detail.description ? `<p style="white-space:pre-wrap;margin:0">${detail.description.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</p>` : '<p style="margin:0">（无描述）</p>'),
+                    : sanitizeHtml(markdownToHtml(detail.description)),
                 },
               }),
               detail.attachments && detail.attachments.length ? h('div', null,
@@ -406,7 +445,6 @@ window.__ModuleLoader__.load({
       })
       const [saving, setSaving] = useState(false)
       const [error, setError] = useState(null)
-      const [showPermissions, setShowPermissions] = useState(false)
       const inputStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid #e6e2d9', borderRadius: 7, padding: '7px 10px', fontSize: 13, outline: 'none' }
 
       function field(key, label, extra) {
@@ -452,25 +490,6 @@ window.__ModuleLoader__.load({
               style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 28, height: 28, cursor: 'pointer', fontSize: 15 },
             }, '×')),
           field('token', `令牌${initial.hasToken ? '（已配置，留空不修改）' : ''}`, { type: 'password', placeholder: 'x-yunxiao-token' }),
-          h('button', {
-            type: 'button', onClick: () => setShowPermissions(true),
-            style: { display: 'block', marginTop: -8, marginBottom: 12, padding: 0, border: 0, background: 'none', color: '#8b7551', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' },
-          }, '查看令牌权限要求'),
-          showPermissions ? h('div', {
-            role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-permissions-title',
-            onClick: () => setShowPermissions(false),
-            style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
-          }, h('div', {
-            onClick: (event) => event.stopPropagation(),
-            style: { width: 400, maxWidth: '94vw', background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '14px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
-          },
-            h('div', { id: 'yunxiao-permissions-title', style: { fontSize: 15, fontWeight: 650, marginBottom: 10 } }, '运行令牌权限要求'),
-            h('div', { style: { color: '#625b50' } },
-              h('p', { style: { margin: '0 0 8px' } }, '令牌必须具备项目和工作项的读取权限，否则插件无法读取并展示云效数据。中心版还需填写组织 ID。'),
-              h('p', { style: { margin: '0 0 8px' } }, '组织列表需要组织读取权限；没有该权限时，仍可使用已填写的当前组织 ID，但无法浏览其他组织。'),
-              h('p', { style: { margin: 0 } }, '如需使用状态流转、评论等写入功能，还需具备相应的工作项写入权限；缺少写权限时这些操作会失败。')),
-            h('button', { type: 'button', onClick: () => setShowPermissions(false), style: { display: 'block', margin: '16px 0 0 auto', border: 0, borderRadius: 7, padding: '7px 14px', background: '#3f382e', color: '#fff', cursor: 'pointer' } }, '知道了')))
-            : null,
           field('organizationId', '组织 ID（中心版必填，Region 版留空）'),
           field('baseUrl', 'API 域名（留空用默认 openapi-rdc.aliyuncs.com）'),
           h('label', { style: { display: 'block', marginBottom: 14 } },
@@ -515,13 +534,16 @@ window.__ModuleLoader__.load({
       const [dragging, setDragging] = useState(null)
       const [dropTarget, setDropTarget] = useState(null)
       const [settings, setSettings] = useState(null)
-      const [helpOpen, setHelpOpen] = useState(false)
       const [orgs, setOrgs] = useState({ organizations: [], organizationId: '', edition: '', error: null })
       const [versionInfo, setVersionInfo] = useState(null)
       const [upgradeState, setUpgradeState] = useState(null)
       const [createOpen, setCreateOpen] = useState(false)
       const [createForm, setCreateForm] = useState({ subject: '', description: '', assignedTo: '' })
       const [members, setMembers] = useState([])
+      const [workitemTypes, setWorkitemTypes] = useState([])
+      const [typesLoading, setTypesLoading] = useState(false)
+      const [typesError, setTypesError] = useState('')
+      const typesRequestId = useRef(0)
       const [creating, setCreating] = useState(false)
       const [createError, setCreateError] = useState('')
       const [createResult, setCreateResult] = useState('')
@@ -600,12 +622,40 @@ window.__ModuleLoader__.load({
         setCreateOpen(true)
         setCreateError('')
         setCreateResult('')
-        setCreateForm({ subject: '', description: '', assignedTo: '' })
+        setCreateForm({ subject: '', description: '', assignedTo: '', workitemTypeId: '' })
+        setMembers([])
+        setWorkitemTypes([])
+        setTypesError('')
+        const requestId = ++typesRequestId.current
+        setTypesLoading(true)
+        const selectedSpace = spaceId
+        const selectedCategory = category
+        const selectedOrg = orgId
+        const [memberResult, typeResult] = await Promise.allSettled([
+          rpc('projectMembers', { spaceId: selectedSpace, orgId: selectedOrg }),
+          rpc('workitemTypes', { spaceId: selectedSpace, category: selectedCategory, orgId: selectedOrg }),
+        ])
+        if (requestId !== typesRequestId.current) return
+        if (memberResult.status === 'fulfilled') setMembers(memberResult.value)
+        else setCreateError(memberResult.reason.message)
+        if (typeResult.status === 'fulfilled') setWorkitemTypes(typeResult.value)
+        else setTypesError(typeResult.reason.message)
+        setTypesLoading(false)
+      }
+
+      async function reloadCreateTypes(nextCategory = category, nextSpace = spaceId) {
+        const requestId = ++typesRequestId.current
+        setWorkitemTypes([])
+        setTypesError('')
+        setTypesLoading(true)
+        setCreateForm((form) => ({ ...form, workitemTypeId: '' }))
         try {
-          setMembers(await rpc('projectMembers', { spaceId, orgId }))
+          const types = await rpc('workitemTypes', { spaceId: nextSpace, category: nextCategory, orgId })
+          if (requestId === typesRequestId.current) setWorkitemTypes(types)
         } catch (err) {
-          setMembers([])
-          setCreateError(err.message)
+          if (requestId === typesRequestId.current) setTypesError(err.message)
+        } finally {
+          if (requestId === typesRequestId.current) setTypesLoading(false)
         }
       }
 
@@ -809,16 +859,15 @@ window.__ModuleLoader__.load({
 
         h('div', {
           style: {
-            display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, flex: 'none',
+            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12, flex: 'none',
             background: '#fff', border: '1px solid #eae5da', borderRadius: 10, padding: '8px 10px',
           },
         },
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 } },
           orgs.organizations.length > 0 && orgs.edition !== 'region' ? h('select', {
             value: orgs.organizationId,
             title: orgs.error ? `组织列表读取失败：${orgs.error}` : '切换组织',
             onChange: (event) => chooseOrg(event.target.value),
-            style: { ...fieldStyle, maxWidth: 220, flex: '1 1 180px' },
+            style: { ...fieldStyle, maxWidth: 220 },
           }, [
             orgs.organizationId ? null : h('option', { key: '__none', value: '' }, '选择组织'),
             ...orgs.organizations.map((org) => h('option', { key: org.id, value: org.id }, org.name || org.id)),
@@ -841,11 +890,10 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button', onClick: openCreate, disabled: !spaceId,
             style: { ...fieldStyle, background: '#3f382e', color: '#fff', borderColor: '#3f382e', cursor: spaceId ? 'pointer' : 'default' },
-          }, '新建需求/缺陷')),
-          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 } },
+          }, '新建需求/缺陷'),
           h('input', {
             value: draft, placeholder: '搜索编号或标题', onChange: (event) => setDraft(event.target.value),
-            style: { ...fieldStyle, width: 'auto', flex: '1 1 200px', minWidth: 120 },
+            style: { ...fieldStyle, width: 200 },
           }),
           h('select', { value: priority, onChange: (event) => setPriority(event.target.value), style: fieldStyle },
             h('option', { value: '' }, '全部优先级'),
@@ -875,17 +923,12 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button', onClick: openSettings,
             style: { ...fieldStyle, cursor: 'pointer', color: '#5c5346' },
-          }, '设置'),
-          h('button', {
-            type: 'button', onClick: () => setHelpOpen(true),
-            style: { ...fieldStyle, cursor: 'pointer', color: '#5c5346' },
-          }, '帮助'))),
+          }, '设置')),
 
         note ? h('div', {
           style: {
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 12px',
-            color: '#8a7f6b', background: '#fff', border: '1px dashed #e3ded2', borderRadius: 10,
-            marginBottom: 12,
+            display: 'grid', placeItems: 'center', gap: 6, padding: '56px 0', color: '#8a7f6b',
+            background: '#fff', border: '1px dashed #e3ded2', borderRadius: 12,
           },
         }, h(Icon), h('div', { style: { fontSize: 13 } }, note)) : null,
 
@@ -958,41 +1001,17 @@ window.__ModuleLoader__.load({
                   : h('div', { style: { fontSize: 12, color: '#b3a893', padding: '18px 0', textAlign: 'center' } }, '暂无')),
               )
             })))),
-        helpOpen ? h('div', {
-          role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-help-title',
-          onClick: () => setHelpOpen(false),
-          style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
-        }, h('div', {
-          onClick: (event) => event.stopPropagation(),
-          style: { width: 620, maxWidth: '94vw', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '13px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
-        },
-          h('div', { style: { display: 'flex', alignItems: 'center', marginBottom: 16 } },
-            h('h2', { id: 'yunxiao-help-title', style: { margin: 0, fontSize: 18, fontWeight: 650 } }, '云效插件使用帮助'),
-            h('span', { style: { flex: 1 } }),
-            h('button', { type: 'button', onClick: () => setHelpOpen(false), 'aria-label': '关闭帮助', style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 30, height: 30, cursor: 'pointer', fontSize: 16 } }, '×')),
-          [
-            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片与附件；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；将需求派发到工作区处理。'],
-            ['看板使用', '先选择组织（中心版）和项目，再切换「需求 / 缺陷」。输入编号或标题后点「刷新」搜索；优先级和负责人筛选会立即生效。拖动卡片到目标状态列即可流转。'],
-            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述和附件。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
-            ['派发到工作区', '点击开放状态工作项上的「处理」，选择工作区后会启动会话并预填工作提示。插件会尝试将工作项流转到开发阶段；完成并推送后可使用 yunxiao_transition 更新状态。'],
-            ['评论与提交关联', '使用 yunxiao_comment 将改动说明写入工作项评论；推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
-            ['令牌与组织权限', '令牌需具备项目和工作项读取权限，否则无法读取看板数据。中心版需填写组织 ID；组织列表需要组织读取权限，没有该权限时可使用已填写的组织 ID，但无法浏览其他组织。状态流转、评论等写入功能还需相应写权限。令牌只保存在 Host 侧，不会回显到看板。'],
-            ['配置入口', '点击「设置」填写云效个人访问令牌、组织 ID、API 域名和版本。中心版通常需要组织 ID；Region 版组织 ID 留空，并按需填写组织 API 域名。'],
-          ].map(([title, text]) => h('section', { key: title, style: { padding: '12px 0', borderTop: '1px solid #eee9df' } },
-            h('div', { style: { fontWeight: 650, color: '#3f382e', marginBottom: 3 } }, title),
-            h('div', { style: { color: '#625b50' } }, text))),
-          h('div', { style: { fontSize: 11.5, color: '#a1937c', borderTop: '1px solid #eee9df', paddingTop: 12 } }, '具体可用功能取决于当前令牌的云效权限及所选工作区权限。')))
-          : null,
         createOpen ? h('div', { style: { position: 'fixed', inset: 0, zIndex: 66, background: 'rgba(35,30,22,.32)', display: 'grid', placeItems: 'center', padding: 24 }, onClick: () => setCreateOpen(false) },
           h('div', { role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'create-workitem-title', onClick: (event) => event.stopPropagation(), style: { width: 480, maxWidth: '94vw', background: '#fff', borderRadius: 14, padding: 20, boxShadow: '0 18px 50px rgba(50,40,25,.24)' } },
             h('h2', { id: 'create-workitem-title', style: { margin: '0 0 14px', fontSize: 16 } }, category === 'Bug' ? '新建缺陷' : '新建需求'),
-            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '标题 *'), h('input', { autoFocus: true, value: createForm.subject, onChange: (event) => setCreateForm((form) => ({ ...form, subject: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } })),
+            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '工作项类型 *'), h('select', { required: true, value: createForm.workitemTypeId || '', disabled: typesLoading || !!typesError, onChange: (event) => setCreateForm((form) => ({ ...form, workitemTypeId: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } }, h('option', { value: '' }, typesLoading ? '类型加载中…' : typesError ? '类型加载失败' : '请选择类型'), workitemTypes.map((type) => h('option', { key: type.id, value: type.id }, type.name))), typesError ? h('span', { role: 'alert', style: { display: 'block', color: '#a3342b', fontSize: 12, marginTop: 4 } }, typesError) : null),
             h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '负责人 *'), h('select', { required: true, value: createForm.assignedTo, onChange: (event) => setCreateForm((form) => ({ ...form, assignedTo: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } }, h('option', { value: '' }, members.length ? '请选择项目成员' : '暂无可选成员'), members.map((member) => h('option', { key: member.id, value: member.id }, member.name)))),
+            h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '标题 *'), h('input', { autoFocus: true, value: createForm.subject, onChange: (event) => setCreateForm((form) => ({ ...form, subject: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' } })),
             h('label', { style: { display: 'block', marginBottom: 12 } }, h('span', { style: { display: 'block', fontSize: 12, marginBottom: 4 } }, '描述'), h('textarea', { rows: 5, value: createForm.description, onChange: (event) => setCreateForm((form) => ({ ...form, description: event.target.value })), style: { ...fieldStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical' } })),
             createError ? h('div', { role: 'alert', style: { color: '#a3342b', fontSize: 12, marginBottom: 10 } }, createError) : null,
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
               h('button', { type: 'button', onClick: () => setCreateOpen(false), style: fieldStyle }, '取消'),
-              h('button', { type: 'button', onClick: submitCreate, disabled: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length, style: { ...fieldStyle, background: '#3f382e', color: '#fff', opacity: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length ? .55 : 1 } }, creating ? '创建中…' : '创建')))) : null,
+              h('button', { type: 'button', onClick: submitCreate, disabled: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError, style: { ...fieldStyle, background: '#3f382e', color: '#fff', opacity: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError ? .55 : 1 } }, creating ? '创建中…' : '创建')))) : null,
         settings ? h(Settings, { initial: settings, orgs, onSave: saveSettings, onClose: () => setSettings(null) }) : null,
         detail ? h(Detail, {
           serial: detail.serial,

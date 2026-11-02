@@ -1,6 +1,24 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { resolveConnection } from '../server/config.js'
+
+test('detail view renders plain Markdown descriptions as formatted HTML', async () => {
+  const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(client, /function markdownToHtml\(/)
+  assert.match(client, /markdownToHtml\(detail\.description\)/)
+  assert.match(client, /const escape = \(text\) => text\.replace\(\/\[&<>"'\]\/g/)
+  assert.match(client, /sanitizeHtml\(markdownToHtml\(detail\.description\)\)/)
+})
+
+test('create type requests use a generation token and always release loading for the current request', async () => {
+  const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(client, /const requestId = \+\+typesRequestId\.current/)
+  assert.match(client, /if \(requestId === typesRequestId\.current\) setWorkitemTypes\(types\)/)
+  assert.match(client, /if \(requestId === typesRequestId\.current\) setTypesError\(err\.message\)/)
+  assert.match(client, /finally \{[\s\S]*if \(requestId === typesRequestId\.current\) setTypesLoading\(false\)/)
+  assert.match(client, /if \(requestId !== typesRequestId\.current\) return/)
+})
 
 const env = {
   YUNXIAO_API_KEY: 'env-token',
@@ -41,42 +59,37 @@ test('missing token is an error', () => {
   assert.throws(() => resolveConnection({}, {}), /令牌/)
 })
 
-test('creation rejects ambiguous or unavailable default types and accepts explicit type ids', async () => {
-  const { fetch, calls } = fakeFetch([
-    { match: '/workitemTypes', json: [{ id: 'one', categoryId: 'Req', enable: true, defaultType: true }, { id: 'two', categoryId: 'Req', enable: true, defaultType: true }] },
-    { match: '/workitems', json: { id: 'created' } },
-  ])
-  const client = createClient({ token: 'cfg', organizationId: 'org' }, { fetch })
-  await assert.rejects(client.createWorkitem({ spaceId: 's', category: 'Req', subject: 'x', assignedTo: 'u' }), /多个默认/)
-  assert.equal(calls.length, 1)
-  await client.createWorkitem({ spaceId: 's', category: 'Req', subject: 'x', assignedTo: 'u', workitemTypeId: 'chosen' })
-  assert.equal(calls.length, 2)
-  assert.equal(calls[1].body.workitemTypeId, 'chosen')
+test('workitem types are project- and category-scoped, active, and normalized', async () => {
+  const { fetch, calls } = fakeFetch([{ match: '/getWorkitemType', json: { workitemTypes: [
+    { identifier: 'req-id', name: '业务需求', categoryIdentifier: 'Req', enable: true },
+    { identifier: 'bug-id', name: '缺陷', categoryIdentifier: 'Bug', enable: true },
+    { identifier: 'disabled', name: '停用', categoryIdentifier: 'Req', enable: false },
+  ] } }])
+  const client = createClient({ token: 'cfg', organizationId: 'org', baseUrl: 'https://yun.example' }, { fetch })
+  assert.deepEqual(await client.workitemTypes('project/a', 'Req'), [{ id: 'req-id', name: '业务需求' }])
+  assert.equal(calls[0].url, 'https://yun.example/oapi/v1/projex/organizations/org/projects/project%2Fa/getWorkitemType?spaceType=Project&category=Req')
+  await assert.rejects(client.workitemTypes('project', 'Task'), /Req 或 Bug/)
 })
 
-test('creation validates default workitem type, category, assignee and title before writing', async () => {
-  const { fetch, calls } = fakeFetch([
-    { match: '/workitemTypes', json: [
-      { id: 'req-type', categoryId: 'Req', enable: true, defaultType: true },
-      { id: 'bug-type', categoryId: 'Bug', enable: true, defaultType: true },
-    ] },
-    { match: '/workitems', json: { id: 'created-id', serialNumber: 'REQ-100' } },
-  ])
+test('creation requires explicit workitem type and maps it to the Yunxiao API field', async () => {
+  const { fetch, calls } = fakeFetch([{ match: '/workitems', json: { id: 'created-id', serialNumber: 'REQ-100' } }])
   const client = createClient({ token: 'cfg', organizationId: 'org', baseUrl: 'https://yun.example' }, { fetch })
-  assert.deepEqual(await client.createWorkitem({ spaceId: 'space', category: 'Req', subject: '  New requirement ', assignedTo: 'user-1' }), {
-    id: 'created-id', serialNumber: 'REQ-100', subject: 'New requirement', category: 'Req',
+  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Req', subject: 'x', assignedTo: 'user-1' }), /工作项类型/)
+  assert.equal(calls.length, 0)
+  assert.deepEqual(await client.createWorkitem({ spaceId: 'space', category: 'Req', subject: ' New ', assignedTo: 'user-1', workitemTypeId: 'req-type' }), {
+    id: 'created-id', serialNumber: 'REQ-100', subject: 'New', category: 'Req',
   })
-  assert.deepEqual(calls.map(({ url, init, body }) => ({ url, method: init.method, body })), [
-    { url: 'https://yun.example/oapi/v1/projex/organizations/org/workitemTypes?categories=Req', method: 'GET', body: undefined },
-    { url: 'https://yun.example/oapi/v1/projex/organizations/org/workitems', method: 'POST', body: {
-      spaceId: 'space', category: 'Req', workitemTypeId: 'req-type', subject: 'New requirement', assignedTo: 'user-1',
-    } },
-  ])
-  const before = calls.length
-  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Task', subject: 'no', assignedTo: 'user-1' }), /Req 或 Bug/)
-  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Req', subject: 'no', assignedTo: '' }), /负责人/)
-  await assert.rejects(client.createWorkitem({ spaceId: 'space', category: 'Req', subject: '  ', assignedTo: 'user-1' }), /标题/)
-  assert.equal(calls.length, before)
+  assert.deepEqual(calls[0].body, { spaceId: 'space', category: 'Req', workitemType: 'req-type', subject: 'New', assignedTo: 'user-1' })
+})
+
+test('creation validates category, assignee and title before writing', async () => {
+  const { fetch, calls } = fakeFetch([{ match: '/workitems', json: { id: 'created' } }])
+  const client = createClient({ token: 'cfg' }, { fetch })
+  const input = { spaceId: 'space', category: 'Req', subject: 'x', assignedTo: 'user-1', workitemTypeId: 'type' }
+  await assert.rejects(client.createWorkitem({ ...input, category: 'Task' }), /Req 或 Bug/)
+  await assert.rejects(client.createWorkitem({ ...input, assignedTo: '' }), /负责人/)
+  await assert.rejects(client.createWorkitem({ ...input, subject: '  ' }), /标题/)
+  assert.equal(calls.length, 0)
 })
 
 test('project members are normalized to selectable ids and names', async () => {
@@ -88,10 +101,11 @@ test('project members are normalized to selectable ids and names', async () => {
 test('creation and project member endpoints support both editions', () => {
   const center = resolveConnection({ token: 'cfg', organizationId: 'org' }, {})
   assert.equal(center.createWorkitem, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/workitems')
-  assert.equal(center.workitemTypes, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/workitemTypes')
+  assert.equal(center.projectWorkitemTypes('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/getWorkitemType')
   assert.equal(center.projectMembers('space/1'), 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/org/projects/space%2F1/members')
   const region = resolveConnection({ token: 'cfg', edition: 'region', baseUrl: 'https://region.example' }, {})
   assert.equal(region.createWorkitem, 'https://region.example/oapi/v1/projex/workitems')
+  assert.equal(region.projectWorkitemTypes('space'), 'https://region.example/oapi/v1/projex/projects/space/getWorkitemType')
   assert.equal(region.projectMembers('space'), 'https://region.example/oapi/v1/projex/projects/space/members')
 })
 
