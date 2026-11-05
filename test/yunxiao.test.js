@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolveConnection } from '../server/config.js'
 
+test('RPC reports non-JSON responses with HTTP status instead of a JSON parse error', async () => {
+  const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(client, /const text = await response\.text\(\)[\s\S]*?payload = JSON\.parse\(text\)[\s\S]*?服务器返回了非 JSON 响应 \(HTTP \$\{response\.status\}\)/)
+  assert.match(client, /text\.trim\(\)\.slice\(0, 160\)/)
+})
+
 test('detail view renders plain Markdown descriptions as formatted HTML', async () => {
   const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(client, /function markdownToHtml\(/)

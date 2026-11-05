@@ -3,24 +3,22 @@ import { realpathSync, readFileSync, writeFileSync, mkdirSync, existsSync } from
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createClient, listOrganizations } from './server/yunxiao.js'
 import { PACKAGE, compareVersions, desktopCliCandidates, fetchLatest, isLocalSpec, readDependencySpec, readVersion, resolveProfile } from './server/version.js'
 
-// ponytail: linked workspace cannot resolve dsh's own packages; resolve from the dsh entry instead
-function hostRequire() {
-  const local = createRequire(import.meta.url)
+// ponytail: linked workspace cannot resolve dsh's own packages; resolve from the dsh entry instead.
+// Must import() (not require()): host loads plugins via Promise.all, require(esm) races and throws ERR_REQUIRE_ESM_RACE_CONDITION.
+function hostResolve(spec) {
   try {
-    local.resolve('@deepseek-ai/dsh-tools')
-    return local
+    return createRequire(import.meta.url).resolve(spec)
   } catch {}
   if (!process.argv[1]) throw new Error('找不到 dsh 安装目录')
-  return createRequire(realpathSync(process.argv[1]))
+  return createRequire(realpathSync(process.argv[1])).resolve(spec)
 }
-const host = hostRequire()
-const { defineTool } = host('@deepseek-ai/dsh-tools')
-const schema = host('@deepseek-ai/schemastery')
-const z = schema.z ?? schema
+const { defineTool } = await import(pathToFileURL(hostResolve('@deepseek-ai/dsh-tools')))
+const schema = await import(pathToFileURL(hostResolve('@deepseek-ai/schemastery')))
+const z = schema.z ?? schema.default ?? schema
 
 export const inject = ['tools', 'webServer']
 export const Config = z.object({

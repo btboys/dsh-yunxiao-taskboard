@@ -31,7 +31,14 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json', ...extraHeaders },
         body: JSON.stringify({ method, args }),
       })
-      const payload = await response.json()
+      const text = await response.text()
+      let payload
+      try {
+        payload = JSON.parse(text)
+      } catch {
+        const detail = text.trim().slice(0, 160)
+        throw new Error(`服务器返回了非 JSON 响应 (HTTP ${response.status})${detail ? `：${detail}` : ''}`)
+      }
       if (!payload.ok) throw new Error(payload.error || '请求失败')
       return payload.value
     }
