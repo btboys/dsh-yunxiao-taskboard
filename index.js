@@ -225,6 +225,11 @@ export function apply(ctx, config) {
       const { id, orgId } = typeof args === 'string' ? { id: args } : (args ?? {})
       return client(orgId).detail(id)
     },
+    comments: (args) => {
+      const { id, orgId } = typeof args === 'string' ? { id: args } : (args ?? {})
+      return client(orgId).comments(id)
+    },
+    updateWorkitem: (input) => client(input?.orgId).updateWorkitem(input),
     transitions: (args) => {
       const { id, orgId } = typeof args === 'string' ? { id: args } : (args ?? {})
       return client(orgId).transitions(id)

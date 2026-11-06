@@ -69,6 +69,69 @@ export function createClient(config, { fetch, env } = {}) {
     if (!json.id) throw new Error('云效未返回新建工作项 ID，无法确认创建结果，请在云效中检查，勿直接重试')
     return { id: json.id, ...(json.serialNumber ? { serialNumber: json.serialNumber } : {}), subject: title, category }
   }
+  // 描述/评论里的图默认是网页登录态地址；OpenAPI 能换出可匿名访问的 OSS 直链
+  async function rewriteEmbeddedFiles(html, fileUrl) {
+    const source = String(html ?? '')
+    const fileIds = [...new Set([...source.matchAll(/fileIdentifier=([\w-]+)/g)].map((match) => match[1]))]
+    if (!fileIds.length) return source
+    const urls = new Map()
+    await Promise.all(fileIds.map(async (fileId) => { urls.set(fileId, await fileUrl(fileId)) }))
+    return source.replace(
+      /https:\/\/devops\.aliyun\.com\/[^"'\s]*?fileIdentifier=([\w-]+)/g,
+      (raw, fileId) => urls.get(fileId) ?? raw,
+    )
+  }
+  // 编辑只改传入的字段；未传的字段保持云效原值
+  async function updateWorkitem({ id, subject, description, assignedTo } = {}) {
+    const wid = await resolveId(id)
+    const body = {}
+    const updated = []
+    if (subject !== undefined) {
+      const title = typeof subject === 'string' ? subject.trim() : ''
+      if (!title) throw new Error('标题不能为空')
+      body.subject = title
+      updated.push('subject')
+    }
+    if (description !== undefined) {
+      if (typeof description !== 'string') throw new Error('描述必须是文本')
+      if (description.length > 100000) throw new Error('描述不能超过 100000 个字符')
+      // 详情展示的是纯文本，编辑保存时按 Markdown 重新排版
+      body.description = description
+      body.formatType = 'MARKDOWN'
+      updated.push('description')
+    }
+    if (assignedTo !== undefined) {
+      if (typeof assignedTo !== 'string' || !assignedTo.trim()) throw new Error('请选择负责人')
+      body.assignedTo = assignedTo.trim()
+      updated.push('assignedTo')
+    }
+    if (!updated.length) throw new Error('没有需要更新的内容')
+    await request(connection.workitem(wid), { method: 'PUT', body })
+    return { workitemId: wid, updated }
+  }
+  async function comments(id) {
+    const wid = await resolveId(id)
+    const { json } = await request(connection.comments(wid))
+    const fileUrls = new Map()
+    const fileUrl = async (fileId) => {
+      if (fileUrls.has(fileId)) return fileUrls.get(fileId)
+      let url = null
+      try {
+        url = (await request(`${connection.workitem(wid)}/files/${encodeURIComponent(fileId)}`)).json.url ?? null
+      } catch {}
+      fileUrls.set(fileId, url)
+      return url
+    }
+    const timeOf = (value) => Number(new Date(value)) || 0
+    const list = await Promise.all((Array.isArray(json) ? json : []).map(async (comment) => ({
+      id: comment.id,
+      content: await rewriteEmbeddedFiles(comment.content, fileUrl),
+      format: comment.contentFormat ?? 'MARKDOWN',
+      user: comment.user?.name ?? '',
+      createdAt: comment.gmtCreate ?? null,
+    })))
+    return list.sort((left, right) => timeOf(right.createdAt) - timeOf(left.createdAt))
+  }
   // 代码库列表只用于把提交 URL 反查成关联接口要的代码库 id
   async function codeupRepositories() {
     const { json } = await request(connection.codeupRepositories)
@@ -108,6 +171,8 @@ export function createClient(config, { fetch, env } = {}) {
     projectMembers,
     workitemTypes,
     createWorkitem,
+    updateWorkitem,
+    comments,
     projects: async () => {
       const { json } = await request(connection.projectsSearch, { method: 'POST', body: { page: 1, perPage: 50 } })
       return json.map((p) => ({ id: p.id, name: p.name, code: p.customCode }))
@@ -160,12 +225,7 @@ export function createClient(config, { fetch, env } = {}) {
         return url
       }
 
-      const embedded = [...new Set([...detail.descriptionHtml.matchAll(/fileIdentifier=([\w-]+)/g)].map((match) => match[1]))]
-      await Promise.all(embedded.map(fileUrl))
-      detail.descriptionHtml = detail.descriptionHtml.replace(
-        /https:\/\/devops\.aliyun\.com\/[^"'\s]*?fileIdentifier=([\w-]+)/g,
-        (raw, fileId) => fileUrls.get(fileId) ?? raw,
-      )
+      detail.descriptionHtml = await rewriteEmbeddedFiles(detail.descriptionHtml, fileUrl)
 
       detail.attachments = []
       try {

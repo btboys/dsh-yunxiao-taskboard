@@ -213,9 +213,20 @@ window.__ModuleLoader__.load({
     ])
     const DROP_TAGS = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'FORM', 'INPUT', 'BUTTON'])
     const KEEP_ATTRS = new Set([
-      'href', 'src', 'alt', 'title', 'style', 'width', 'height',
+      'href', 'src', 'alt', 'title', 'width', 'height',
       'colspan', 'rowspan', 'align', 'valign', 'target', 'rel', 'loading',
     ])
+    // 保留 style 会让成员可写的评论注入全屏 CSS，样式统一由下面按标签补
+    const HTML_TAG = /<\/?[a-z][^>]*>/i
+
+    function isHtml(text) {
+      return HTML_TAG.test(String(text ?? ''))
+    }
+
+    // 富文本重新排版成 Markdown 会丢图片/表格等，保存前需要用户确认
+    function hasRichMedia(html) {
+      return /<(img|table|video|figure|iframe)\b/i.test(String(html ?? ''))
+    }
 
     function sanitizeHtml(html) {
       if (!html) return ''
@@ -291,6 +302,32 @@ window.__ModuleLoader__.load({
       return blocks.join('') || '<p>（无描述）</p>'
     }
 
+    // 评论可能是 Markdown 也可能是云效富文本；先按 contentFormat 判定，缺失时才看内容
+    function commentKind(comment) {
+      const content = String(comment?.content ?? '')
+      if (!content.trim()) return 'empty'
+      if (comment?.format === 'RICHTEXT') return 'html'
+      if (comment?.format === 'MARKDOWN') return 'markdown'
+      return isHtml(content) ? 'html' : 'markdown'
+    }
+
+    function commentHtml(comment) {
+      const kind = commentKind(comment)
+      if (kind === 'empty') return '<p>（无内容）</p>'
+      const content = String(comment?.content ?? '')
+      return sanitizeHtml(kind === 'html' ? content : markdownToHtml(content))
+    }
+
+    // 只提交改过的字段，避免把未触碰的富文本描述覆盖成纯文本
+    function editPatch(detail, form) {
+      const patch = {}
+      const subject = String(form?.subject ?? '').trim()
+      if (subject !== String(detail?.subject ?? '').trim()) patch.subject = subject
+      if (form?.description !== (detail?.description ?? '')) patch.description = form?.description ?? ''
+      if (form?.assignedTo) patch.assignedTo = form.assignedTo
+      return patch
+    }
+
     function formatSize(bytes) {
       if (!bytes && bytes !== 0) return ''
       if (bytes < 1024) return `${bytes} B`
@@ -298,10 +335,155 @@ window.__ModuleLoader__.load({
       return `${(bytes / 1024 / 1024).toFixed(1)} MB`
     }
 
-    function Detail({ serial, detail, error, onClose }) {
-      const bodyRef = React.useRef(null)
+    function Alert({ message, tone }) {
+      const warning = tone === 'warning'
+      return h('div', {
+        role: warning ? 'status' : 'alert',
+        style: warning
+          ? { color: '#8a5a1f', background: '#fdf6e6', border: '1px solid #f3e2bd', borderRadius: 8, padding: '8px 10px', fontSize: 13 }
+          : { color: '#a3342b', background: '#fdf1ef', borderRadius: 8, padding: '8px 10px', fontSize: 13 },
+      }, message)
+    }
+
+    // 详情阅读态：字段 + 描述 + 附件
+    function ReadView({ detail, rows }) {
+      return h('div', null,
+        h('h2', { style: { margin: '0 0 14px', fontSize: 16.5, lineHeight: 1.45, fontWeight: 650 } }, detail.subject || '(无标题)'),
+        h('dl', {
+          style: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '7px 14px', margin: '0 0 16px', fontSize: 13 },
+        },
+          rows.flatMap(([label, value]) => [
+            h('dt', { key: `k-${label}`, style: { color: '#a1937c' } }, label),
+            h('dd', { key: `v-${label}`, style: { margin: 0, color: '#3f382e' } }, value),
+          ])),
+        h('div', { style: { fontSize: 12, color: '#a1937c', marginBottom: 6 } }, '描述'),
+        h('div', {
+          style: {
+            wordBreak: 'break-word', fontSize: 13.5, color: '#3f382e', lineHeight: 1.65,
+            background: '#faf8f3', border: '1px solid #f0ece3', borderRadius: 8, padding: '10px 12px',
+            overflowX: 'auto',
+          },
+          dangerouslySetInnerHTML: {
+            __html: detail.descriptionHtml && isHtml(detail.descriptionHtml)
+              ? sanitizeHtml(detail.descriptionHtml)
+              : sanitizeHtml(markdownToHtml(detail.description)),
+          },
+        }),
+        detail.attachments && detail.attachments.length ? h('div', null,
+          h('div', { style: { fontSize: 12, color: '#a1937c', margin: '16px 0 6px' } }, `附件 ${detail.attachments.length}`),
+          detail.attachments.map((file) => h(file.url ? 'a' : 'div', {
+            key: file.id,
+            href: file.url || undefined, target: file.url ? '_blank' : undefined, rel: file.url ? 'noreferrer' : undefined,
+            style: {
+              display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none',
+              border: '1px solid #f0ece3', borderRadius: 8, padding: '8px 10px', marginBottom: 6,
+              color: file.url ? '#3f382e' : '#a1937c', cursor: file.url ? 'pointer' : 'default',
+            },
+          },
+            h('span', { style: { fontSize: 15 } }, '📎'), // taste-skill-ignore: 附件行的文件图标，无图标库可用
+            h('span', { style: { flex: 1, fontSize: 13, wordBreak: 'break-all' } }, file.name),
+            h('span', { style: { fontSize: 11.5, color: '#a1937c' } }, formatSize(file.size))))) : null)
+    }
+
+    function editField(text, control) {
+      return h('label', { style: { display: 'block', marginBottom: 12 } },
+        h('span', { style: { display: 'block', fontSize: 12, color: '#a1937c', marginBottom: 4 } }, text),
+        control)
+    }
+
+    // 编辑态：标题 / 负责人 / 描述，未改的字段不提交
+    function EditForm({ detail, form, members, editError, saving, lossConfirmed, onChange, onCancel, onSave }) {
+      return h('div', null,
+        editField('标题 *', h('input', {
+          value: form.subject, autoFocus: true,
+          onChange: (event) => onChange({ subject: event.target.value }),
+          style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' },
+        })),
+        editField('负责人', h('select', {
+          value: form.assignedTo,
+          onChange: (event) => onChange({ assignedTo: event.target.value }),
+          style: { ...fieldStyle, width: '100%', boxSizing: 'border-box' },
+        },
+          h('option', { value: '' }, `保持当前（${detail.assignee || '未分配'}）`),
+          members.map((member) => h('option', { key: member.id, value: member.id }, member.name)))),
+        editField('描述', h('textarea', {
+          rows: 8, value: form.description,
+          onChange: (event) => onChange({ description: event.target.value }),
+          style: { ...fieldStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', font: 'inherit', lineHeight: 1.6 },
+        })),
+        h('div', { style: { fontSize: 11.5, color: '#b3a893', marginTop: -6, marginBottom: 12 } }, '描述以 Markdown 重新排版保存；只在改动描述时生效，未改动则保留云效原富文本内容。'),
+        lossConfirmed ? h(Alert, {
+          tone: 'warning',
+          message: '原描述包含图片或表格，保存后会按 Markdown 重新排版并丢失这些内容。确认请点「仍然保存」。',
+        }) : null,
+        editError ? h(Alert, { message: editError }) : null,
+        h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 } },
+          h('button', {
+            type: 'button', onClick: onCancel,
+            style: { border: '1px solid #e6e2d9', background: '#fff', color: '#5c5346', borderRadius: 8, padding: '7px 16px', cursor: 'pointer', fontSize: 13 },
+          }, '取消'),
+          h('button', {
+            type: 'button', onClick: onSave, disabled: saving,
+            style: { border: 0, background: '#3f382e', color: '#fff', borderRadius: 8, padding: '7px 18px', cursor: saving ? 'default' : 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 },
+          }, saving ? '保存中…' : lossConfirmed ? '仍然保存' : '保存')))
+    }
+
+    // 评论展示与发布
+    function Comments({ comments, commentsError, commentError, draft, posting, onDraftChange, onSubmit }) {
+      return h('section', {
+        style: { marginTop: 20, borderTop: '1px solid #f0ece3', paddingTop: 14 },
+      },
+        h('div', { style: { fontSize: 12, color: '#a1937c', marginBottom: 8 } }, comments ? `评论 ${comments.length}` : '评论'),
+        commentsError ? h(Alert, { message: commentsError.message || String(commentsError) }) : null,
+        comments === null && !commentsError ? h('div', { style: { color: '#a89c88', fontSize: 13 } }, '评论加载中…') : null,
+        comments && comments.length ? comments.map((comment) => h('article', {
+          key: comment.id,
+          style: { border: '1px solid #f0ece3', borderRadius: 8, padding: '8px 10px', marginBottom: 8 },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, fontSize: 12, color: '#a1937c' } },
+            h('span', {
+              style: { width: 18, height: 18, flex: 'none', borderRadius: '50%', background: '#f0ece3', display: 'inline-grid', placeItems: 'center', fontSize: 10, color: '#948b7c' },
+            }, (comment.user || '?').slice(0, 1)),
+            h('span', { style: { color: '#5c5346', fontWeight: 600 } }, comment.user || '未知用户'),
+            h('span', null, formatTime(comment.createdAt))),
+          h('div', {
+            style: { wordBreak: 'break-word', fontSize: 13, color: '#3f382e', lineHeight: 1.65 },
+            dangerouslySetInnerHTML: { __html: commentHtml(comment) },
+          }))) : (comments ? h('div', { style: { color: '#a89c88', fontSize: 13 } }, '还没有评论') : null),
+        h('div', { style: { marginTop: 10 } },
+          h('textarea', {
+            rows: 3, value: draft, placeholder: '写评论…支持 Markdown，Ctrl/⌘+Enter 发布',
+            onChange: (event) => onDraftChange(event.target.value),
+            onKeyDown: (event) => {
+              if (event.isComposing) return
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) onSubmit()
+            },
+            style: { ...fieldStyle, width: '100%', boxSizing: 'border-box', resize: 'vertical', font: 'inherit', lineHeight: 1.6 },
+          }),
+          commentError ? h(Alert, { message: commentError }) : null,
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: 8 } },
+            h('button', {
+              type: 'button', onClick: onSubmit, disabled: posting || !draft.trim(),
+              style: { border: 0, background: '#3f382e', color: '#fff', borderRadius: 8, padding: '7px 18px', cursor: posting || !draft.trim() ? 'default' : 'pointer', fontSize: 13, opacity: posting || !draft.trim() ? 0.55 : 1 },
+            }, posting ? '发布中…' : '发布评论'))))
+    }
+
+    function Detail({ serial, detail, error, comments, commentsError, refreshError, orgId, onClose, onPostComment, onSave }) {
+      const contentRef = React.useRef(null)
       const previewRef = React.useRef(null)
+      const membersRequestId = React.useRef(0)
+      const savingRef = React.useRef(false)
+      const postingRef = React.useRef(false)
       const [preview, setPreview] = useState(null)
+      const [editing, setEditing] = useState(false)
+      const [form, setForm] = useState(null)
+      const [members, setMembers] = useState([])
+      const [editError, setEditError] = useState('')
+      const [lossConfirmed, setLossConfirmed] = useState(false)
+      const [saving, setSaving] = useState(false)
+      const [draft, setDraft] = useState('')
+      const [posting, setPosting] = useState(false)
+      const [commentError, setCommentError] = useState('')
 
       useEffect(() => { previewRef.current = preview }, [preview])
 
@@ -315,9 +497,12 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKey)
       }, [onClose])
 
-      // 图片没登录云效会 401：换成可点的占位，不留破图
+      // 卸载后不再回填成员列表
+      useEffect(() => () => { membersRequestId.current += 1 }, [])
+
+      // 图片没登录云效会 401：换成占位，不留破图（描述和评论都覆盖）
       useEffect(() => {
-        const root = bodyRef.current
+        const root = contentRef.current
         if (!root) return
         const cleanups = []
         for (const image of root.querySelectorAll('img')) {
@@ -333,15 +518,82 @@ window.__ModuleLoader__.load({
           cleanups.push(() => image.removeEventListener('error', fail))
         }
         return () => cleanups.forEach((fn) => fn())
-      }, [detail])
+      }, [detail, comments])
 
-      // 点描述里的图 → 弹层预览，不跳转、不下载
+      // 点图 → 弹层预览，不跳转、不下载
       function openPreview(event) {
         const image = event.target.closest?.('img')
         if (!image) return
         event.preventDefault()
         event.stopPropagation()
         setPreview(image.currentSrc || image.src)
+      }
+
+      async function startEdit() {
+        if (!detail) return
+        setEditError('')
+        setLossConfirmed(false)
+        setMembers([])
+        setForm({ subject: detail.subject || '', description: detail.description || '', assignedTo: '' })
+        setEditing(true)
+        if (!detail.spaceId) return
+        const requestId = ++membersRequestId.current
+        try {
+          const list = await rpc('projectMembers', { spaceId: detail.spaceId, orgId })
+          if (requestId === membersRequestId.current) setMembers(list)
+        } catch (err) {
+          if (requestId === membersRequestId.current) setEditError(`负责人列表加载失败：${err.message}`)
+        }
+      }
+
+      function changeForm(next) {
+        setForm((current) => ({ ...current, ...next }))
+        if ('description' in next) setLossConfirmed(false)
+      }
+
+      async function submitEdit() {
+        if (savingRef.current || !form) return
+        // 空标题交给服务端拒绝，客户端不再重复校验
+        const patch = editPatch(detail, form)
+        if (!Object.keys(patch).length) {
+          setEditError('没有修改内容')
+          return
+        }
+        if (patch.description !== undefined && hasRichMedia(detail.descriptionHtml) && !lossConfirmed) {
+          setLossConfirmed(true)
+          return
+        }
+        savingRef.current = true
+        setSaving(true)
+        setEditError('')
+        try {
+          await onSave(patch)
+          setEditing(false)
+          setLossConfirmed(false)
+        } catch (err) {
+          setEditError(err.message)
+        } finally {
+          savingRef.current = false
+          setSaving(false)
+        }
+      }
+
+      async function submitComment() {
+        if (postingRef.current) return
+        const content = draft.trim()
+        if (!content) return
+        postingRef.current = true
+        setPosting(true)
+        setCommentError('')
+        try {
+          await onPostComment(content)
+          setDraft('')
+        } catch (err) {
+          setCommentError(err.message)
+        } finally {
+          postingRef.current = false
+          setPosting(false)
+        }
       }
 
       const rows = detail ? [
@@ -375,6 +627,13 @@ window.__ModuleLoader__.load({
           },
             h('span', { style: { font: '600 12px/1.4 ui-monospace, Menlo, monospace', color: '#8a7f6b' } }, serial), // taste-skill-ignore: 工作项编号用等宽字体，扫视对齐（app-screens ID 规范）
             h('span', { style: { flex: 1 } }),
+            detail && !editing ? h('button', {
+              type: 'button', onClick: startEdit, title: '编辑工作项',
+              style: {
+                border: '1px solid #e6e2d9', background: '#fff', color: '#5c5346', cursor: 'pointer',
+                borderRadius: 7, padding: '0 10px', height: 28, fontSize: 12.5,
+              },
+            }, '编辑') : null,
             h('button', {
               type: 'button', onClick: onClose, title: '关闭',
               style: {
@@ -382,47 +641,32 @@ window.__ModuleLoader__.load({
                 borderRadius: 7, width: 28, height: 28, fontSize: 15, lineHeight: 1,
               },
             }, '×')),
-          h('div', { style: { padding: 16, overflowY: 'auto', flex: 1 } },
-            error ? h('div', { style: { color: '#a3342b', background: '#fdf1ef', borderRadius: 8, padding: '8px 10px', fontSize: 13 } }, error.message) : null,
+          h('div', {
+            ref: contentRef,
+            onClick: openPreview,
+            style: { padding: 16, overflowY: 'auto', flex: 1 },
+          },
+            error ? h(Alert, { message: error.message }) : null,
+            refreshError ? h(Alert, { tone: 'warning', message: refreshError }) : null,
             detail ? h('div', null,
-              h('h2', { style: { margin: '0 0 14px', fontSize: 16.5, lineHeight: 1.45, fontWeight: 650 } }, detail.subject || '(无标题)'),
-              h('dl', {
-                style: { display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '7px 14px', margin: '0 0 16px', fontSize: 13 },
-              },
-                rows.flatMap(([label, value]) => [
-                  h('dt', { key: `k-${label}`, style: { color: '#a1937c' } }, label),
-                  h('dd', { key: `v-${label}`, style: { margin: 0, color: '#3f382e' } }, value),
-                ])),
-              h('div', { style: { fontSize: 12, color: '#a1937c', marginBottom: 6 } }, '描述'),
-              h('div', {
-                ref: bodyRef,
-                onClick: openPreview,
-                style: {
-                  wordBreak: 'break-word', fontSize: 13.5, color: '#3f382e', lineHeight: 1.65,
-                  background: '#faf8f3', border: '1px solid #f0ece3', borderRadius: 8, padding: '10px 12px',
-                  overflowX: 'auto',
-                },
-                dangerouslySetInnerHTML: {
-                  __html: detail.descriptionHtml && /<\/?[a-z][^>]*>/i.test(detail.descriptionHtml)
-                    ? sanitizeHtml(detail.descriptionHtml)
-                    : sanitizeHtml(markdownToHtml(detail.description)),
-                },
-              }),
-              detail.attachments && detail.attachments.length ? h('div', null,
-                h('div', { style: { fontSize: 12, color: '#a1937c', margin: '16px 0 6px' } }, `附件 ${detail.attachments.length}`),
-                detail.attachments.map((file) => h(file.url ? 'a' : 'div', {
-                  key: file.id,
-                  href: file.url || undefined, target: file.url ? '_blank' : undefined, rel: file.url ? 'noreferrer' : undefined,
-                  style: {
-                    display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none',
-                    border: '1px solid #f0ece3', borderRadius: 8, padding: '8px 10px', marginBottom: 6,
-                    color: file.url ? '#3f382e' : '#a1937c', cursor: file.url ? 'pointer' : 'default',
-                  },
-                },
-                  h('span', { style: { fontSize: 15 } }, '📎'), // taste-skill-ignore: 附件行的文件图标，无图标库可用
-                  h('span', { style: { flex: 1, fontSize: 13, wordBreak: 'break-all' } }, file.name),
-                  h('span', { style: { fontSize: 11.5, color: '#a1937c' } }, formatSize(file.size))))) : null)
-            : (!error ? h('div', { style: { color: '#a89c88', fontSize: 13 } }, '加载中…') : null))),
+              editing && form
+                ? h(EditForm, {
+                  detail, form, members, editError, saving, lossConfirmed,
+                  onChange: changeForm,
+                  onCancel: () => { setEditing(false); setEditError(''); setLossConfirmed(false) },
+                  onSave: submitEdit,
+                })
+                : h(ReadView, { detail, rows }),
+              h(Comments, {
+                comments,
+                commentsError,
+                commentError,
+                draft,
+                posting,
+                onDraftChange: setDraft,
+                onSubmit: submitComment,
+              }))
+              : (!error ? h('div', { style: { color: '#a89c88', fontSize: 13 } }, '加载中…') : null))),
         preview ? h('div', {
           onClick: (event) => { event.stopPropagation(); setPreview(null) },
           style: {
@@ -572,6 +816,7 @@ window.__ModuleLoader__.load({
       const [typesLoading, setTypesLoading] = useState(false)
       const [typesError, setTypesError] = useState('')
       const typesRequestId = useRef(0)
+      const detailRequestId = useRef(0)
       const [creating, setCreating] = useState(false)
       const [createError, setCreateError] = useState('')
       const [createResult, setCreateResult] = useState('')
@@ -781,13 +1026,68 @@ window.__ModuleLoader__.load({
       }
 
       async function showDetail(card) {
-        setDetail({ serial: card.serialNumber, detail: null, error: null })
+        const requestId = ++detailRequestId.current
+        setDetail({ serial: card.serialNumber, detail: null, comments: null, commentsError: null, refreshError: null, error: null })
+        const [detailResult, commentsResult] = await Promise.allSettled([
+          rpc('detail', { id: card.id, orgId }),
+          rpc('comments', { id: card.id, orgId }),
+        ])
+        // 连续点开两张卡片时，只认最后一次请求的结果
+        if (requestId !== detailRequestId.current) return
+        setDetail({
+          serial: card.serialNumber,
+          detail: detailResult.status === 'fulfilled' ? detailResult.value : null,
+          error: detailResult.status === 'rejected' ? detailResult.reason : null,
+          comments: commentsResult.status === 'fulfilled' ? commentsResult.value : null,
+          commentsError: commentsResult.status === 'rejected'
+            ? new Error(`评论加载失败：${commentsResult.reason?.message || commentsResult.reason}`)
+            : null,
+        })
+      }
+
+      // 关闭时作废进行中的详情请求，避免响应回来又把抽屉打开
+      function closeDetail() {
+        detailRequestId.current += 1
+        setDetail(null)
+      }
+
+      async function postComment(content) {
+        const id = detail?.detail?.id
+        if (!id) throw new Error('工作项还没加载完成')
+        await rpc('comment', { id, content, orgId })
+        // 评论已写入；列表刷新失败只提示，不再当成发布失败
         try {
-          const data = await rpc('detail', { id: card.id, orgId })
-          setDetail({ serial: card.serialNumber, detail: data, error: null })
+          const comments = await rpc('comments', { id, orgId })
+          setDetail((current) => (current?.detail?.id === id ? { ...current, comments, commentsError: null } : current))
         } catch (err) {
-          setDetail({ serial: card.serialNumber, detail: null, error: err })
+          setDetail((current) => (current?.detail?.id === id
+            ? { ...current, commentsError: new Error(`评论已发布，但列表刷新失败：${err.message}`) }
+            : current))
         }
+      }
+
+      async function saveDetail(input) {
+        const id = detail?.detail?.id
+        if (!id) throw new Error('工作项还没加载完成')
+        await rpc('updateWorkitem', { id, orgId, ...input })
+        // 保存已成功；刷新失败只提示，不当作保存失败
+        try {
+          const data = await rpc('detail', { id, orgId })
+          setDetail((current) => (current?.detail?.id === id ? { ...current, detail: data, error: null, refreshError: null } : current))
+        } catch (err) {
+          setDetail((current) => {
+            if (current?.detail?.id !== id) return current
+            const next = { ...current.detail }
+            if (input.subject !== undefined) next.subject = input.subject
+            if (input.description !== undefined) {
+              next.description = input.description
+              next.descriptionHtml = ''
+            }
+            return { ...current, detail: next, refreshError: `已保存，但刷新详情失败：${err.message}` }
+          })
+        }
+        // 标题、负责人会体现在卡片上，刷新看板
+        setTick((value) => value + 1)
       }
 
       async function processIn(card, workspaceId) {
@@ -1048,12 +1348,12 @@ window.__ModuleLoader__.load({
             h('span', { style: { flex: 1 } }),
             h('button', { type: 'button', onClick: () => setHelpOpen(false), 'aria-label': '关闭帮助', style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 30, height: 30, cursor: 'pointer', fontSize: 16 } }, '×')),
           [
-            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片与附件；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；创建需求或缺陷；将工作项派发到工作区处理。'],
+            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片、附件和评论；编辑标题、描述和负责人；直接发布评论；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；创建需求或缺陷；将工作项派发到工作区处理。'],
             ['看板使用', '先选择组织（中心版）和项目，再切换「需求 / 缺陷」。输入编号或标题后点「刷新」搜索；优先级和负责人筛选会立即生效。拖动卡片到目标状态列即可流转。'],
-            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述和附件。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
+            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述、附件和评论；详情内可直接发布评论，点「编辑」修改标题、描述和负责人；含图片/表格的描述保存前会二次确认。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
             ['创建工作项', '点击「新建」填写标题、描述和负责人，创建需求或缺陷；创建完成后可在看板中查看。负责人列表和工作项类型由所选项目加载。'],
             ['派发到工作区', '点击开放状态工作项上的「处理」，选择工作区后会启动会话并预填工作提示。插件会尝试将工作项流转到开发阶段；完成并推送后可使用 yunxiao_transition 更新状态。'],
-            ['评论与提交关联', '使用 yunxiao_comment 将改动说明写入工作项评论；推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
+            ['评论与提交关联', '详情内可直接发布 Markdown 评论；AI 侧使用 yunxiao_comment 将改动说明写入工作项评论，推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
             ['令牌与组织权限', '令牌需具备项目和工作项读取权限，否则无法读取看板数据。中心版需填写组织 ID；组织列表需要组织读取权限，没有该权限时可使用已填写的组织 ID，但无法浏览其他组织。创建、状态流转、评论等写入功能还需相应写权限。令牌只保存在 Host 侧，不会回显到看板。'],
             ['配置入口', '点击「设置」填写云效个人访问令牌、组织 ID、API 域名和版本。中心版通常需要组织 ID；Region 版组织 ID 留空，并按需填写组织 API 域名。'],
           ].map(([title, text]) => h('section', { key: title, style: { padding: '12px 0', borderTop: '1px solid #eee9df' } },
@@ -1072,38 +1372,18 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
               h('button', { type: 'button', onClick: () => setCreateOpen(false), style: fieldStyle }, '取消'),
               h('button', { type: 'button', onClick: submitCreate, disabled: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError, style: { ...fieldStyle, background: '#3f382e', color: '#fff', opacity: creating || !createForm.subject.trim() || !createForm.assignedTo || !members.length || !createForm.workitemTypeId || typesLoading || !!typesError ? .55 : 1 } }, creating ? '创建中…' : '创建')))) : null,
-        helpOpen ? h('div', {
-          role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'yunxiao-help-title',
-          onClick: () => setHelpOpen(false),
-          style: { position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(35,30,22,.28)', display: 'grid', placeItems: 'center', padding: 24 },
-        }, h('div', {
-          onClick: (event) => event.stopPropagation(),
-          style: { width: 620, maxWidth: '94vw', maxHeight: '88vh', overflowY: 'auto', background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 18px 50px rgba(50,40,25,.24)', font: '13px/1.65 system-ui, -apple-system, "PingFang SC", sans-serif' },
-        },
-          h('div', { style: { display: 'flex', alignItems: 'center', marginBottom: 16 } },
-            h('h2', { id: 'yunxiao-help-title', style: { margin: 0, fontSize: 18, fontWeight: 650 } }, '云效插件使用帮助'),
-            h('span', { style: { flex: 1 } }),
-            h('button', { type: 'button', onClick: () => setHelpOpen(false), 'aria-label': '关闭帮助', style: { border: '1px solid #e6e2d9', background: '#fff', color: '#776c5b', borderRadius: 7, width: 30, height: 30, cursor: 'pointer', fontSize: 16 } }, '×')),
-          [
-            ['插件能力', '按状态查看云效需求和缺陷；查看工作项详情、描述图片与附件；搜索编号或标题，并按优先级、负责人筛选；拖拽卡片流转状态；创建需求或缺陷；将工作项派发到工作区处理。'],
-            ['看板使用', '先选择组织（中心版）和项目，再切换「需求 / 缺陷」。输入编号或标题后点「刷新」搜索；优先级和负责人筛选会立即生效。拖动卡片到目标状态列即可流转。'],
-            ['详情与流转', '点击卡片查看状态、负责人、创建人、项目、时间、描述和附件。状态流转会调用云效接口；令牌无工作项写权限时，操作会失败，不会仅在本地改变状态。'],
-            ['创建工作项', '点击「新建」填写标题、描述和负责人，创建需求或缺陷；创建完成后可在看板中查看。负责人列表和工作项类型由所选项目加载。'],
-            ['派发到工作区', '点击开放状态工作项上的「处理」，选择工作区后会启动会话并预填工作提示。插件会尝试将工作项流转到开发阶段；完成并推送后可使用 yunxiao_transition 更新状态。'],
-            ['评论与提交关联', '使用 yunxiao_comment 将改动说明写入工作项评论；推送后可附带提交 SHA、标题和 Codeup 提交页 URL 关联提交。'],
-            ['令牌与组织权限', '令牌需具备项目和工作项读取权限，否则无法读取看板数据。中心版需填写组织 ID；组织列表需要组织读取权限，没有该权限时可使用已填写的组织 ID，但无法浏览其他组织。创建、状态流转、评论等写入功能还需相应写权限。令牌只保存在 Host 侧，不会回显到看板。'],
-            ['配置入口', '点击「设置」填写云效个人访问令牌、组织 ID、API 域名和版本。中心版通常需要组织 ID；Region 版组织 ID 留空，并按需填写组织 API 域名。'],
-          ].map(([title, text]) => h('section', { key: title, style: { padding: '12px 0', borderTop: '1px solid #eee9df' } },
-            h('div', { style: { fontWeight: 650, color: '#3f382e', marginBottom: 3 } }, title),
-            h('div', { style: { color: '#625b50' } }, text))),
-          h('div', { style: { fontSize: 11.5, color: '#a1937c', borderTop: '1px solid #eee9df', paddingTop: 12 } }, '具体可用功能取决于当前令牌的云效权限及所选工作区权限。')))
-          : null,
         settings ? h(Settings, { initial: settings, orgs, onSave: saveSettings, onClose: () => setSettings(null) }) : null,
         detail ? h(Detail, {
           serial: detail.serial,
           detail: detail.detail,
           error: detail.error,
-          onClose: () => setDetail(null),
+          comments: detail.comments,
+          commentsError: detail.commentsError,
+          refreshError: detail.refreshError,
+          orgId,
+          onClose: closeDetail,
+          onPostComment: postComment,
+          onSave: saveDetail,
         }) : null)
     }
 
@@ -1122,6 +1402,8 @@ window.__ModuleLoader__.load({
           name: 'main', key: 'yunxiao', inject: () => ({ ctx }),
         }, Board))
       },
+      // 纯函数单元测试入口；浏览器加载时由 module loader 忽略
+      __test: { isHtml, hasRichMedia, editPatch, markdownToHtml, commentKind },
     }
   },
 })

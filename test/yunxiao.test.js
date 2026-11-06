@@ -21,7 +21,7 @@ test('detail view renders plain Markdown descriptions as formatted HTML', async 
   assert.match(client, /markdownToHtml\(detail\.description\)/)
   assert.match(client, /const escape = \(text\) => text\.replace\(\/\[&<>"'\]\/g/)
   assert.match(client, /sanitizeHtml\(markdownToHtml\(detail\.description\)\)/)
-  assert.ok(client.includes("detail.descriptionHtml && /<\\/?[a-z][^>]*>/i.test(detail.descriptionHtml)"))
+  assert.match(client, /detail\.descriptionHtml && isHtml\(detail\.descriptionHtml\)/)
 })
 
 test('create type requests use a generation token and always release loading for the current request', async () => {
@@ -474,4 +474,65 @@ test('a commit already mentioned in the record is not appended twice', async () 
   await client.comment({ id: 'wid', content: '已推送 abc1234 修好边距', commits: [{ sha: 'abc1234', projectId: '9' }] })
   const posted = calls.find((call) => call.url.endsWith('/comments'))
   assert.equal(posted.body.content, '已推送 abc1234 修好边距')
+})
+
+test('comments are normalized with author, format and newest first', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/workitems/wid/comments', json: [
+      { id: 'c1', content: '旧评论', contentFormat: 'MARKDOWN', user: { name: '沈晓晶' }, gmtCreate: 1000 },
+      { id: 'c2', content: '<p>新评论</p>', contentFormat: 'RICHTEXT', user: { name: '夏悸' }, gmtCreate: 2000 },
+      { id: 'c3', content: '时间缺失', contentFormat: 'MARKDOWN' },
+    ] },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  assert.deepEqual(await client.comments('wid'), [
+    { id: 'c2', content: '<p>新评论</p>', format: 'RICHTEXT', user: '夏悸', createdAt: 2000 },
+    { id: 'c1', content: '旧评论', format: 'MARKDOWN', user: '沈晓晶', createdAt: 1000 },
+    { id: 'c3', content: '时间缺失', format: 'MARKDOWN', user: '', createdAt: null },
+  ])
+  assert.equal(calls[0].init.method, 'GET')
+  assert.equal(calls[0].url, 'https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/o/workitems/wid/comments')
+})
+
+test('update sends only the changed fields', async () => {
+  const { fetch, calls } = fakeFetch([{ match: '/workitems/wid', json: {} }])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.updateWorkitem({
+    id: 'wid', subject: ' 新标题 ', description: '## 描述', assignedTo: 'u1',
+  })
+  const put = calls[0]
+  assert.equal(put.init.method, 'PUT')
+  assert.deepEqual(put.body, {
+    subject: '新标题',
+    description: '## 描述',
+    formatType: 'MARKDOWN',
+    assignedTo: 'u1',
+  })
+  assert.deepEqual(result, { workitemId: 'wid', updated: ['subject', 'description', 'assignedTo'] })
+})
+
+test('update refuses empty title, bad description or assignee and an empty patch before writing', async () => {
+  const { fetch, calls } = fakeFetch([])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  await assert.rejects(client.updateWorkitem({ id: 'wid', subject: '   ' }), /标题/)
+  await assert.rejects(client.updateWorkitem({ id: 'wid', description: 42 }), /描述必须是文本/)
+  await assert.rejects(client.updateWorkitem({ id: 'wid', description: 'x'.repeat(100001) }), /100000/)
+  await assert.rejects(client.updateWorkitem({ id: 'wid', assignedTo: '  ' }), /负责人/)
+  await assert.rejects(client.updateWorkitem({ id: 'wid', assignedTo: 42 }), /负责人/)
+  await assert.rejects(client.updateWorkitem({ id: 'wid' }), /没有需要更新的内容/)
+  assert.equal(calls.length, 0)
+})
+
+test('comments rewrite embedded images to anonymous oss urls', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/workitems/wid/comments', json: [
+      { id: 'c1', content: '<p><img src="https://devops.aliyun.com/projex/api/workitem/file/url?fileIdentifier=f1"></p>', contentFormat: 'RICHTEXT', user: { name: '甲' }, gmtCreate: 1 },
+    ] },
+    { match: '/files/f1', json: { url: 'https://oss.example/comment.png' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const comments = await client.comments('wid')
+  assert.match(comments[0].content, /https:\/\/oss\.example\/comment\.png/)
+  assert.ok(!comments[0].content.includes('devops.aliyun.com'))
+  assert.ok(calls.some((call) => call.url.endsWith('/workitems/wid/files/f1')))
 })
