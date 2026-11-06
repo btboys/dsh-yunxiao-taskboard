@@ -28,7 +28,7 @@ DeepSeek Harness（DSH）插件：把阿里云云效的**需求和缺陷**按状
 
 ## 📦 安装
 
-以 npm 组合包分发：[`dsh-yunxiao-taskboard`](https://www.npmjs.com/package/dsh-yunxiao-taskboard)，按组合包安装，无需本地目录。要求 DSH `>= 0.2.1-rc.3`（声明在 `engines.dsh`）。
+以 npm 组合包分发：[`dsh-yunxiao-taskboard`](https://www.npmjs.com/package/dsh-yunxiao-taskboard)，按组合包安装，无需本地目录。要求 DSH `>= 0.2.1-rc.3`（声明在 `engines.dsh`，兼容后续版本）。
 
 **Web**：侧边栏「插件」→「添加插件」→ 搜索框填 `dsh-yunxiao-taskboard` → 安装。
 

@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { resolveConnection } from '../server/config.js'
 
+test('plugin declares an open-ended DSH compatibility range', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  // 只要求「下限 + 无上限」，不锁死版本号，升版不用改测试
+  assert.match(manifest.engines.dsh, /^>=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+})
+
 test('RPC reports non-JSON responses with HTTP status instead of a JSON parse error', async () => {
   const client = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(client, /const text = await response\.text\(\)[\s\S]*?payload = JSON\.parse\(text\)[\s\S]*?服务器返回了非 JSON 响应 \(HTTP \$\{response\.status\}\)/)
