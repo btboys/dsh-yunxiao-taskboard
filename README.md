@@ -91,6 +91,7 @@ yunxiao_comment({
 - `content` 以 Markdown 写到评论列表；提交列表会自动补在正文末尾（正文已提到的提交不重复）。
 - `commits[].url` 是 Codeup 提交页地址，插件用代码库列表反查关联接口要的代码库 id；反查不到时改传 `projectId`。
 - 提交关联失败不回滚评论：返回值里 `commits` 逐个给出 `linked` 和失败原因。
+- 云效偶尔会在写入关联记录后同步 appshell 失败，POST 报错但记录已存在；插件会回查关联列表核对真实结果，已写入的返回 `linked: true` 并带 `note`，重试时已关联的提交直接返回 `alreadyLinked: true`，不会重复关联。
 - 提交信息里带 `#EVXU-1095` 时云效本身也会自动关联，双保险。
 
 ## 🧪 开发

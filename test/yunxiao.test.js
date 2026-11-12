@@ -156,7 +156,7 @@ function fakeFetch(routes) {
   const calls = []
   const fetch = async (url, init = {}) => {
     calls.push({ url, init, body: init.body ? JSON.parse(init.body) : undefined })
-    const hit = routes.find((r) => url.includes(r.match))
+    const hit = routes.find((r) => url.includes(r.match) && (!r.method || (init.method ?? 'GET') === r.method))
     if (!hit) throw new Error(`unmocked ${url}`)
     return new Response(JSON.stringify(hit.json ?? {}), {
       status: hit.status ?? 200,
@@ -463,6 +463,43 @@ test('a failed commit link still keeps the comment and reports the reason', asyn
   assert.equal(result.commentId, 'comment-3')
   assert.equal(result.commits[0].linked, false)
   assert.match(result.commits[0].error, /NoPermission/)
+})
+
+test('a commit link reported as failed is verified against the relation list', async () => {
+  const calls = []
+  // 云效先写关联记录再同步 appshell：记录已入库，接口却返回 500
+  let relations = []
+  const reply = (json, status = 200) => new Response(JSON.stringify(json), {
+    status, headers: { 'x-total': '1' },
+  })
+  const fetch = async (url, init = {}) => {
+    calls.push({ url, init })
+    if (String(url).includes('/comments')) return reply({ id: 'comment-5' })
+    if (String(url).includes('/extRelationRecords')) {
+      if (init.method === 'POST') {
+        relations = [{ category: 'codeupCommit', projectId: '9', businessId: 'abcdef12' }]
+        return reply({ errorMessage: 'save ext relation to appshell failed' }, 500)
+      }
+      return reply(relations)
+    }
+    throw new Error(`unmocked ${url}`)
+  }
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.comment({ id: 'wid', content: '改动', commits: [{ sha: 'abcdef12', projectId: '9' }] })
+  assert.equal(result.commits[0].linked, true)
+  assert.match(result.commits[0].note, /appshell/)
+  assert.equal(calls.filter((call) => call.init.method === 'POST' && call.url.endsWith('/extRelationRecords')).length, 1)
+})
+
+test('a commit already linked is not posted a second time', async () => {
+  const { fetch, calls } = fakeFetch([
+    { match: '/extRelationRecords', json: [{ category: 'codeupCommit', projectId: '9', businessId: 'ABC1234' }] },
+    { match: '/comments', json: { id: 'comment-6' } },
+  ])
+  const client = createClient({ token: 't', organizationId: 'o' }, { fetch, env: {} })
+  const result = await client.comment({ id: 'wid', content: '改动', commits: [{ sha: 'abc1234', projectId: '9' }] })
+  assert.deepEqual(result.commits, [{ sha: 'abc1234', linked: true, alreadyLinked: true }])
+  assert.equal(calls.filter((call) => call.init.method === 'POST' && call.url.endsWith('/extRelationRecords')).length, 0)
 })
 
 test('a commit already mentioned in the record is not appended twice', async () => {

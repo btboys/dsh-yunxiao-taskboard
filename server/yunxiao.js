@@ -132,6 +132,19 @@ export function createClient(config, { fetch, env } = {}) {
     })))
     return list.sort((left, right) => timeOf(right.createdAt) - timeOf(left.createdAt))
   }
+  // 已关联的提交 sha：既用于跳过重复关联，也用于关联接口报错后核对真实结果
+  // （云效偶发写入关联记录后同步 appshell 失败，POST 返回 500 但记录已存在）
+  async function linkedCommitShas(wid) {
+    try {
+      const { json } = await request(`${connection.extRelations(wid)}?category=codeupCommit`)
+      const records = Array.isArray(json) ? json : (json?.records ?? [])
+      return new Set(records
+        .filter((record) => record?.category === 'codeupCommit' && record?.businessId)
+        .map((record) => String(record.businessId).toLowerCase()))
+    } catch {
+      return new Set()
+    }
+  }
   // 代码库列表只用于把提交 URL 反查成关联接口要的代码库 id
   async function codeupRepositories() {
     const { json } = await request(connection.codeupRepositories)
@@ -269,8 +282,15 @@ export function createClient(config, { fetch, env } = {}) {
             repositories = await codeupRepositories()
           } catch {}
         }
+        const known = await linkedCommitShas(wid)
         for (const commit of pushed) {
           const sha = String(commit.sha).trim()
+          const key = sha.toLowerCase()
+          // 重复调用不改写已有关系，避免同一提交关联两次
+          if (known.has(key)) {
+            linked.push({ sha, linked: true, alreadyLinked: true })
+            continue
+          }
           const repoId = String(commit.projectId || projectId || repoIdOf(repositories, commit.url) || '').trim()
           if (!repoId) {
             linked.push({ sha, linked: false, error: '缺少代码库 id，无法关联到需求；请在 commits 里补 projectId 或 Codeup 提交页 url' })
@@ -284,9 +304,17 @@ export function createClient(config, { fetch, env } = {}) {
               title: commit.title ?? '',
               url: commit.url ?? '',
             } })
+            known.add(key)
             linked.push({ sha, linked: true })
           } catch (error) {
-            linked.push({ sha, linked: false, error: error?.message || '关联提交失败' })
+            // 报错不代表没写进去：回查关联列表确认真实状态，避免谎报失败
+            const confirmed = await linkedCommitShas(wid)
+            if (confirmed.has(key)) {
+              known.add(key)
+              linked.push({ sha, linked: true, note: `云效返回错误但关联记录已写入（${error?.message || '未知错误'}）` })
+            } else {
+              linked.push({ sha, linked: false, error: error?.message || '关联提交失败' })
+            }
           }
         }
       }
